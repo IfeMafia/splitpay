@@ -1,0 +1,209 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAID
+  DISTRIBUTING
+  COMPLETED
+  CANCELLED
+}
+
+enum CollaboratorStatus {
+  INVITED
+  CONFIRMED
+  REMOVED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  REVERSED
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String?   @map("password_hash")
+  fullName        String    @map("full_name")
+  phone           String?
+  kycStatus       KycStatus @default(NONE) @map("kyc_status")
+  defaultCurrency String    @map("default_currency")
+  country         String
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  payoutAccounts   PayoutAccount[]
+  ownedProjects    Project[]       @relation("ProjectOwner")
+  collaboratorRows Collaborator[]
+
+  @@map("users")
+}
+
+model PayoutAccount {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  provider           String
+  providerAccountRef String   @map("provider_account_ref")
+  country            String
+  currency           String
+  isDefault          Boolean  @default(false) @map("is_default")
+  verified           Boolean  @default(false)
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collaborators Collaborator[]
+
+  @@index([userId])
+  @@map("payout_accounts")
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  ownerId     String        @map("owner_id")
+  name        String
+  description String?
+  totalAmount Decimal       @map("total_amount") @db.Decimal(18, 2)
+  currency    String
+  status      ProjectStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
+  collaborators  Collaborator[]
+  payments       Payment[]
+  splitSnapshots SplitSnapshot[]
+
+  @@index([ownerId])
+  @@map("projects")
+}
+
+model Collaborator {
+  id              String             @id @default(uuid())
+  projectId       String             @map("project_id")
+  userId          String?            @map("user_id")
+  invitedEmail    String?            @map("invited_email")
+  role            String
+  splitPercentage Decimal            @map("split_percentage") @db.Decimal(5, 2)
+  status          CollaboratorStatus @default(INVITED)
+  payoutAccountId String?            @map("payout_account_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user               User?               @relation(fields: [userId], references: [id])
+  payoutAccount      PayoutAccount?      @relation(fields: [payoutAccountId], references: [id])
+  payoutTransactions PayoutTransaction[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("collaborators")
+}
+
+// Frozen split state at the moment a payment is generated/confirmed.
+// Payout calculations must always read from here, never from live
+// Collaborator rows, so later edits never alter historical transactions.
+model SplitSnapshot {
+  id           String   @id @default(uuid())
+  projectId    String   @map("project_id")
+  paymentId    String   @unique @map("payment_id")
+  snapshotData Json     @map("snapshot_data")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("split_snapshots")
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  projectId         String        @map("project_id")
+  paymentLinkToken  String        @unique @map("payment_link_token")
+  expectedAmount    Decimal       @map("expected_amount") @db.Decimal(18, 2)
+  actualAmount      Decimal?      @map("actual_amount") @db.Decimal(18, 2)
+  currency          String
+  provider          String
+  providerReference String?       @unique @map("provider_reference")
+  status            PaymentStatus @default(PENDING)
+  paidAt            DateTime?     @map("paid_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  splitSnapshot      SplitSnapshot?
+  payoutTransactions PayoutTransaction[]
+
+  @@index([projectId])
+  @@map("payments")
+}
+
+model PayoutTransaction {
+  id                String       @id @default(uuid())
+  paymentId         String       @map("payment_id")
+  collaboratorId    String       @map("collaborator_id")
+  amount            Decimal      @db.Decimal(18, 2)
+  currency          String
+  status            PayoutStatus @default(PENDING)
+  providerReference String?      @unique @map("provider_reference")
+  failureReason     String?      @map("failure_reason")
+  attemptedAt       DateTime?    @map("attempted_at")
+  completedAt       DateTime?    @map("completed_at")
+
+  payment      Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  collaborator Collaborator @relation(fields: [collaboratorId], references: [id])
+
+  @@index([paymentId])
+  @@index([collaboratorId])
+  @@map("payout_transactions")
+}
+
+model WebhookEvent {
+  id              String   @id @default(uuid())
+  provider        String
+  eventType       String   @map("event_type")
+  providerEventId String   @unique @map("provider_event_id")
+  rawPayload      Json     @map("raw_payload")
+  processed       Boolean  @default(false)
+  receivedAt      DateTime @default(now()) @map("received_at")
+
+  @@map("webhook_events")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  actorId    String?  @map("actor_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@map("audit_log")
+}
