@@ -17,8 +17,8 @@ These are the agreed canonical routes/pages. Do not create alternative route nam
 ```text
 /                         Landing page
 
-/sign-in                  Sign-in
-/sign-up                  Sign-up
+/signin                  Signin
+/signup                  Signup
 
 /dashboard                Overview/dashboard
 /dashboard/pools          Pool list
