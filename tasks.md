@@ -7,7 +7,7 @@ All product, PRD, architecture, API, task, and engineering documentation lives i
 ```text
 splitpay/
 ├── backend/
-├── front-end/
+├── frontend/
 ├── docs/
 └── package.json
 ```
