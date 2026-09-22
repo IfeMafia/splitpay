@@ -97,7 +97,7 @@ components/withdrawals/
 
 ## E2 — Authentication Pages
 
-### `/sign-in`
+### `/signin`
 Contains:
 - Email
 - Password
@@ -107,7 +107,7 @@ Contains:
 - Authentication error
 - Link to `/sign-up`
 
-### `/sign-up`
+### `/signup`
 Contains:
 - Name
 - Email
