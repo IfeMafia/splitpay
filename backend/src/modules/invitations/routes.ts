@@ -1,50 +1,13 @@
 import { Router } from 'express';
 import * as invitationController from './controller';
-import { authenticate, requirePoolMember, requirePoolOwner } from '../../middleware/auth';
-import { validateBody } from '../../middleware/validate';
-import { createCodeInviteSchema, createEmailInviteSchema } from './validators';
+import { authenticate } from '../../middleware/auth';
 
-export const poolInvitationRouter = Router({ mergeParams: true });
+const router = Router();
 
-poolInvitationRouter.post(
-  '/code',
-  authenticate,
-  requirePoolOwner,
-  validateBody(createCodeInviteSchema),
-  invitationController.createCodeInvitation,
-);
+// Public endpoint to view an invitation details
+router.get('/:token', invitationController.getInvitation);
 
-poolInvitationRouter.post(
-  '/email',
-  authenticate,
-  requirePoolOwner,
-  validateBody(createEmailInviteSchema),
-  invitationController.createEmailInvitation,
-);
+// Protected endpoint to accept it
+router.post('/:token/accept', authenticate, invitationController.acceptInvitation);
 
-poolInvitationRouter.get(
-  '/',
-  authenticate,
-  requirePoolMember,
-  invitationController.getPoolInvitations,
-);
-
-poolInvitationRouter.delete(
-  '/:invitationId',
-  authenticate,
-  requirePoolOwner,
-  invitationController.revokeInvitation,
-);
-
-export const publicInvitationRouter = Router();
-
-publicInvitationRouter.get(
-  '/:token',
-  invitationController.getInvitationPreview,
-);
-
-publicInvitationRouter.post(
-  '/:token/accept',
-  authenticate,
-  invitationController.acceptInvitation,
-);
+export default router;
