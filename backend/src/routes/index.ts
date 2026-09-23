@@ -7,6 +7,7 @@ import paymentRoutes from '../modules/payments/routes';
 import payoutRoutes from '../modules/payouts/routes';
 import webhookRoutes from '../modules/webhooks/routes';
 import auditLogRoutes from '../modules/audit-log/routes';
+import invitationRoutes from '../modules/invitations/routes';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use('/payments', paymentRoutes);
 router.use('/payouts', payoutRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/audit-logs', auditLogRoutes);
+router.use('/invitations', invitationRoutes);
 
 export default router;

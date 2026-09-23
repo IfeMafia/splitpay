@@ -1,11 +1,12 @@
 import { prisma } from '../../lib/prisma';
 import { CreateUserDto, UpdateUserDto, UserResponse } from './types';
 import { AppError } from '../../middleware/errorHandler';
+import jwt from 'jsonwebtoken';
+import { env } from '../../config/env';
 
 /**
  * TODO: Hash password with bcrypt before storing.
  * TODO: Check for duplicate email before insert (handle P2002 Prisma error).
- * TODO: Return a sanitized UserResponse (strip passwordHash).
  */
 export async function createUser(dto: CreateUserDto): Promise<UserResponse> {
   // TODO: const passwordHash = await bcrypt.hash(dto.password, 12);
@@ -23,18 +24,31 @@ export async function createUser(dto: CreateUserDto): Promise<UserResponse> {
 }
 
 /**
- * TODO: Verify password against stored hash.
- * TODO: Generate and return a signed JWT (id, email, exp).
+ * NOTE: Passwords are stored plain until bcrypt hashing is added to createUser.
+ * TODO: Replace direct comparison with: const valid = await bcrypt.compare(password, user.passwordHash);
  */
 export async function loginUser(
-  _email: string,
-  _password: string,
+  email: string,
+  password: string,
 ): Promise<{ token: string; user: UserResponse }> {
-  throw new AppError(501, 'loginUser not implemented', 'NOT_IMPLEMENTED');
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) throw new AppError(401, 'Invalid email or password', 'UNAUTHORIZED');
+
+  // TODO: replace with bcrypt.compare once hashing is wired
+  const valid = password === user.passwordHash;
+  if (!valid) throw new AppError(401, 'Invalid email or password', 'UNAUTHORIZED');
+
+  const token = jwt.sign(
+    { id: user.id, email: user.email },
+    env.JWT_SECRET,
+    { expiresIn: '7d' },
+  );
+
+  return { token, user: toUserResponse(user) };
 }
 
 /**
- * TODO: Fetch user by ID, throw 404 if not found.
+ * Fetch user by ID, throw 404 if not found.
  */
 export async function getUserById(id: string): Promise<UserResponse> {
   const user = await prisma.user.findUnique({ where: { id } });
@@ -43,7 +57,6 @@ export async function getUserById(id: string): Promise<UserResponse> {
 }
 
 /**
- * TODO: Apply partial updates to a user record.
  * TODO: Prevent email changes here (separate verification flow).
  */
 export async function updateUser(id: string, dto: UpdateUserDto): Promise<UserResponse> {
