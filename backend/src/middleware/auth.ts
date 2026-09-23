@@ -2,21 +2,20 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { AppError } from './errorHandler';
+import { prisma } from '../lib/prisma';
+import { Pool, PoolMember, PoolRole } from '@prisma/client';
 
-export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-  };
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
 }
 
-/**
- * TODO: Implement full JWT auth middleware:
- * - Extract Bearer token from Authorization header
- * - Verify token signature with JWT_SECRET
- * - Attach decoded user payload to req.user
- * - Reject with 401 if token is missing, expired, or invalid
- */
+export interface AuthenticatedRequest extends Request {
+  user?: AuthenticatedUser;
+  poolMember?: PoolMember;
+  pool?: Pool;
+}
+
 export function authenticate(req: AuthenticatedRequest, _res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
@@ -28,22 +27,93 @@ export function authenticate(req: AuthenticatedRequest, _res: Response, next: Ne
 
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as { id: string; email: string };
-    req.user = payload;
+    req.user = { id: payload.id, email: payload.email };
     next();
   } catch {
     next(new AppError(401, 'Token is invalid or expired', 'UNAUTHORIZED'));
   }
 }
 
+export function optionalAuthenticate(req: AuthenticatedRequest, _res: Response, next: NextFunction): void {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    return next();
+  }
+
+  const token = authHeader.slice(7);
+
+  try {
+    const payload = jwt.verify(token, env.JWT_SECRET) as { id: string; email: string };
+    req.user = { id: payload.id, email: payload.email };
+  } catch {
+    // Ignore invalid token for optional auth
+  }
+  next();
+}
+
 /**
- * TODO: Implement role-based access control:
- * - Accept a list of allowed roles
- * - Check req.user.role against the list
- * - Reject with 403 if the role is not permitted
+ * Ensures the authenticated user belongs to the specified pool in req.params.poolId
  */
-export function authorize(..._roles: string[]) {
-  return (_req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
-    // TODO: check req.user.role against _roles
+export function requirePoolMember(req: AuthenticatedRequest, _res: Response, next: NextFunction): void {
+  if (!req.user) {
+    return next(new AppError(401, 'Authentication required', 'UNAUTHORIZED'));
+  }
+
+  const poolId = req.params.poolId as string;
+  if (!poolId) {
+    return next(new AppError(400, 'poolId parameter is missing', 'BAD_REQUEST'));
+  }
+
+  prisma.poolMember.findUnique({
+    where: {
+      poolId_userId: {
+        poolId,
+        userId: req.user.id,
+      },
+    },
+    include: {
+      pool: true,
+    },
+  }).then((member) => {
+    if (!member) {
+      return next(new AppError(403, 'You are not a member of this Pool', 'FORBIDDEN'));
+    }
+    req.poolMember = member;
+    req.pool = (member as unknown as { pool: Pool }).pool;
     next();
-  };
+  }).catch(next);
+}
+
+/**
+ * Ensures the authenticated user is an OWNER of the specified pool
+ */
+export function requirePoolOwner(req: AuthenticatedRequest, _res: Response, next: NextFunction): void {
+  if (!req.user) {
+    return next(new AppError(401, 'Authentication required', 'UNAUTHORIZED'));
+  }
+
+  const poolId = req.params.poolId as string;
+  if (!poolId) {
+    return next(new AppError(400, 'poolId parameter is missing', 'BAD_REQUEST'));
+  }
+
+  prisma.poolMember.findUnique({
+    where: {
+      poolId_userId: {
+        poolId,
+        userId: req.user.id,
+      },
+    },
+    include: {
+      pool: true,
+    },
+  }).then((member) => {
+    if (!member || member.role !== PoolRole.OWNER) {
+      return next(new AppError(403, 'Owner privileges required for this action', 'FORBIDDEN'));
+    }
+    req.poolMember = member;
+    req.pool = (member as unknown as { pool: Pool }).pool;
+    next();
+  }).catch(next);
 }
