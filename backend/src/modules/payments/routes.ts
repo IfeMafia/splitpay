@@ -23,7 +23,7 @@ router.post("/initialize/:token", paymentController.initializePaystackPayment);
 router.get("/verify/:reference", paymentController.verifyPaymentTransaction);
 
 router.post("/webhook", (req, res, next) => {
-  req.params.provider = "paystack";
+  (req.params as Record<string, string>).provider = "paystack";
   handleProviderWebhook(req, res, next);
 });
 
