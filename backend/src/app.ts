@@ -19,6 +19,7 @@ app.get('/health', (_req, res) => {
 
 // API Routes
 app.use('/api', routes);
+app.use('/api/v1', routes);
 
 // Central error handling middleware
 app.use(errorHandler);
