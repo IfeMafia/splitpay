@@ -5,6 +5,9 @@ import Link from "next/link";
 import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatAmount, formatDate, formatRelativeTime } from "../../../../../lib/format";
+import { toast } from "@/app/components/Toast";
+import { getUser } from "@/app/lib/auth";
+import ConfirmModal from "@/app/components/ui/ConfirmModal";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -58,8 +61,47 @@ export default function PaymentsPage({ params }: Props) {
   const [expectedAmount, setExpectedAmount] = useState("");
   const [createState, setCreateState] = useState<CreateState>("idle");
   const [createError, setCreateError] = useState("");
-
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    isDestructive?: boolean;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
+
+  const currentUser = getUser();
+  const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
+
+  function handleNullifyLinkPrompt(paymentId: string, token: string) {
+    setModalConfig({
+      isOpen: true,
+      title: "Nullify Payment Link",
+      message: `Are you sure you want to nullify/revoke payment link "${token.toUpperCase()}"? Clients using this link will no longer be able to make payments.`,
+      confirmText: "Nullify Link",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/payment-links/${paymentId}`).catch(() => api.delete(`/payments/${paymentId}`));
+          toast.success("Payment link nullified.");
+          setPayments(prev => prev.filter(p => p.id !== paymentId));
+        } catch (err) {
+          toast.error(err, "Failed to nullify payment link.");
+        } finally {
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
 
   const load = useCallback(async () => {
     setPageState("loading");
@@ -385,6 +427,21 @@ export default function PaymentsPage({ params }: Props) {
                           Open
                         </a>
                       )}
+                      {isOwner && !isPaid && (
+                        <button
+                          onClick={() => handleNullifyLinkPrompt(p.id, p.paymentLinkToken)}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "5px 11px", borderRadius: 6,
+                            background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.18)",
+                            fontSize: 11.5, fontWeight: 500, color: "#DC2626",
+                            cursor: "pointer", whiteSpace: "nowrap",
+                            fontFamily: "var(--font-sans)",
+                          }}
+                        >
+                          Nullify
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -430,6 +487,17 @@ export default function PaymentsPage({ params }: Props) {
           Back to Pool
         </Link>
       </div>
+
+      <ConfirmModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        confirmText={modalConfig.confirmText}
+        isDestructive={modalConfig.isDestructive}
+        loading={modalConfig.loading}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={() => setModalConfig(m => ({ ...m, isOpen: false }))}
+      />
     </div>
   );
 }

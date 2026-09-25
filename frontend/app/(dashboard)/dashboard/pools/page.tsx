@@ -34,26 +34,24 @@ export default function PoolsPage() {
   const [joinError, setJoinError] = useState("");
 
   function handleJoin() {
-    if (!joinInput.trim()) {
-      setJoinError("Please enter an invite link or code.");
+    let raw = joinInput.trim();
+    if (!raw) {
+      setJoinError("Please enter an invite code or link.");
       return;
     }
     setJoinError("");
-    // Extract the token from a full URL or use as-is (raw UUID)
-    const raw = joinInput.trim();
+    raw = raw.replace(/\/+$/, "");
     let token = raw;
     try {
-      const url = new URL(raw);
-      const parts = url.pathname.split("/").filter(Boolean);
-      // /invitations/:token  → last segment
-      const idx = parts.indexOf("invitations");
-      if (idx !== -1 && parts[idx + 1]) {
-        token = parts[idx + 1];
+      if (raw.startsWith("http://") || raw.startsWith("https://")) {
+        const url = new URL(raw);
+        const parts = url.pathname.split("/").filter(Boolean);
+        token = parts[parts.length - 1] || raw;
       }
     } catch {
-      // Not a URL — treat as raw token/code
+      // Treated as raw token / code
     }
-    router.push(`/invitations/${token}`);
+    router.push(`/join/${token}`);
   }
 
   useEffect(() => {
@@ -135,7 +133,7 @@ export default function PoolsPage() {
           <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
             <input
               type="text"
-              placeholder="https://…/invitations/… or paste code"
+              placeholder="e.g. hsy or splitpay.com/join/hsy"
               value={joinInput}
               onChange={e => setJoinInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleJoin()}

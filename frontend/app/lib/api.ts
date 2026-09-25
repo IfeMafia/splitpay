@@ -131,7 +131,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const json = await res.json();
-  return json.data as T;
+  return (json.data !== undefined ? json.data : json) as T;
 }
 
 export interface FetchOptions {

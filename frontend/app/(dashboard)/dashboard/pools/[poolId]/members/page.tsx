@@ -875,6 +875,17 @@ export default function MembersPage({ params }: Props) {
         </Link>
       </div>
 
+      <ConfirmModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        confirmText={modalConfig.confirmText}
+        isDestructive={modalConfig.isDestructive}
+        loading={modalConfig.loading}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={() => setModalConfig(m => ({ ...m, isOpen: false }))}
+      />
+
     </div>
   );
 }
