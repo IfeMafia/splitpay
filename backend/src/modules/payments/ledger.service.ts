@@ -154,7 +154,7 @@ export async function confirmPaymentTransaction(
 
   const configuredType = splitConfig?.type ?? SplitType.EQUAL;
   const equalSplit = members.length > 0 ? 100 / members.length : 0;
-  let snapshotType = SplitType.EQUAL;
+  let snapshotType: SplitType = SplitType.EQUAL;
   let collaboratorsForCalc = members.map(m => ({
     id: m.id,
     userId: m.userId,

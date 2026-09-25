@@ -7,8 +7,16 @@ import { InvitationStatus, PoolRole } from '@prisma/client';
  * Token here is the unique invite token on PoolInvitation.
  */
 export async function getInvitation(token: string) {
-  const invitation = await prisma.poolInvitation.findUnique({
-    where: { token },
+  const normalizedToken = token.trim().toLowerCase();
+  const invitation = await prisma.poolInvitation.findFirst({
+    where: {
+      OR: [
+        { token: normalizedToken },
+        { code: normalizedToken },
+        { token },
+        { code: token },
+      ],
+    },
     include: {
       pool: {
         include: {
@@ -45,7 +53,17 @@ export async function getInvitation(token: string) {
  * Authenticated endpoint — accept an invitation and join the pool.
  */
 export async function acceptInvitation(token: string, userId: string) {
-  const invitation = await prisma.poolInvitation.findUnique({ where: { token } });
+  const normalizedToken = token.trim().toLowerCase();
+  const invitation = await prisma.poolInvitation.findFirst({
+    where: {
+      OR: [
+        { token: normalizedToken },
+        { code: normalizedToken },
+        { token },
+        { code: token },
+      ],
+    },
+  });
 
   if (!invitation || invitation.status !== InvitationStatus.PENDING) {
     throw new AppError(404, 'Invitation not found or already accepted', 'NOT_FOUND');

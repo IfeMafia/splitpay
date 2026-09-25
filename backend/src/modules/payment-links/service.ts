@@ -4,9 +4,10 @@ import { AppError } from '../../middleware/errorHandler';
 import { CreatePaymentLinkDto, UpdatePaymentLinkDto, InitializePaymentDto } from './validators';
 import { PaymentLinkResponse } from '../../contracts';
 import { PaymentStatus } from '@prisma/client';
+import { generateShortToken } from '../../utils/token';
 
 function generateLinkToken(): string {
-  return crypto.randomBytes(16).toString('hex');
+  return generateShortToken();
 }
 
 export async function createPaymentLink(
