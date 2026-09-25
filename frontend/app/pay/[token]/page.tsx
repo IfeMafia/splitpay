@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { formatAmount, formatDate } from "../../lib/format";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050/api";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -25,7 +25,7 @@ interface Props {
   params: Promise<{ token: string }>;
 }
 
-type PageState = "loading" | "ready" | "paid" | "not_found" | "error";
+type PageState = "loading" | "ready" | "paid" | "not_found" | "error" | "initializing";
 
 /* ─── Page ────────────────────────────────────── */
 
@@ -36,6 +36,11 @@ export default function PayPage({ params }: Props) {
   const [payment, setPayment] = useState<PaymentLink | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // Email form state
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+
   useEffect(() => {
     async function load() {
       try {
@@ -43,7 +48,7 @@ export default function PayPage({ params }: Props) {
         if (res.status === 404) { setState("not_found"); return; }
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body?.message ?? `Error ${res.status}`);
+          throw new Error(body?.error?.message ?? body?.message ?? `Error ${res.status}`);
         }
         const json = await res.json();
         const data: PaymentLink = json.data;
@@ -57,6 +62,42 @@ export default function PayPage({ params }: Props) {
     }
     load();
   }, [token]);
+
+  function validateEmail(val: string): string {
+    if (!val.trim()) return "Email is required.";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim())) return "Enter a valid email address.";
+    return "";
+  }
+
+  async function handlePay(e: React.FormEvent) {
+    e.preventDefault();
+    const err = validateEmail(email);
+    setEmailTouched(true);
+    setEmailError(err);
+    if (err) return;
+
+    setState("initializing");
+    setErrorMsg("");
+
+    try {
+      const callbackUrl = `${window.location.origin}/pay/verify`;
+      const res = await fetch(`${BASE_URL}/payments/pay/${token}/initialize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), callbackUrl }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.error?.message ?? body?.message ?? `Error ${res.status}`);
+      }
+      const { authorizationUrl } = body.data;
+      // Redirect client to Paystack-hosted checkout
+      window.location.href = authorizationUrl;
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to initialize payment.");
+      setState("ready");
+    }
+  }
 
   /* ── Loading ── */
   if (state === "loading") {
@@ -123,7 +164,6 @@ export default function PayPage({ params }: Props) {
     return (
       <Shell>
         <div style={{ maxWidth: 440 }}>
-          {/* Success icon */}
           <div style={{
             width: 48, height: 48, borderRadius: "50%",
             background: "rgba(22,163,74,0.1)",
@@ -160,6 +200,9 @@ export default function PayPage({ params }: Props) {
   /* ── Ready to pay ── */
   if (!payment) return null;
 
+  const isInitializing = state === "initializing";
+  const liveEmailError = emailTouched ? validateEmail(email) : "";
+
   return (
     <Shell>
       <div style={{ maxWidth: 440, width: "100%" }}>
@@ -185,14 +228,14 @@ export default function PayPage({ params }: Props) {
           {formatAmount(payment.expectedAmount, payment.currency)}
         </p>
         <p style={{ fontSize: 12.5, color: "#bbb", marginBottom: 32 }}>
-          {payment.currency} · via Splitpay
+          {payment.currency} · via Splitpay & Paystack
         </p>
 
         {/* Details card */}
         <div style={{
           padding: "14px 16px", borderRadius: 12,
           border: "1px solid rgba(0,0,0,0.08)", background: "#FAFAFA",
-          marginBottom: 28, display: "flex", flexDirection: "column", gap: 10,
+          marginBottom: 24, display: "flex", flexDirection: "column", gap: 10,
         }}>
           <SummaryRow label="Link created">{formatDate(payment.createdAt)}</SummaryRow>
           <SummaryRow label="Provider">{payment.provider}</SummaryRow>
@@ -203,34 +246,80 @@ export default function PayPage({ params }: Props) {
           </SummaryRow>
         </div>
 
-        {/* Pay CTA — disabled, Paystack not connected */}
-        <div style={{ marginBottom: 16 }}>
+        {/* Error banner */}
+        {errorMsg && (
+          <div style={{
+            display: "flex", alignItems: "flex-start", gap: 9,
+            padding: "11px 14px", borderRadius: 8, marginBottom: 16,
+            background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+              <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p style={{ fontSize: 12.5, color: "#991B1B" }}>{errorMsg}</p>
+          </div>
+        )}
+
+        {/* Checkout form */}
+        <form onSubmit={handlePay} noValidate>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, color: "#0A0A0A", marginBottom: 7 }}>
+              Your email address
+            </label>
+            <input
+              id="pay-email"
+              type="email"
+              value={email}
+              onChange={e => { setEmail(e.target.value); if (emailTouched) setEmailError(validateEmail(e.target.value)); }}
+              onBlur={() => { setEmailTouched(true); setEmailError(validateEmail(email)); }}
+              placeholder="you@example.com"
+              disabled={isInitializing}
+              autoComplete="email"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                padding: "12px 14px", borderRadius: 10,
+                border: `1px solid ${liveEmailError ? "rgba(220,38,38,0.5)" : "rgba(0,0,0,0.12)"}`,
+                background: "#fff", fontSize: 14, color: "#0A0A0A",
+                outline: "none", fontFamily: "inherit",
+                transition: "border-color 140ms",
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = liveEmailError ? "rgba(220,38,38,0.7)" : "#0A0A0A"; e.currentTarget.style.boxShadow = "0 0 0 2px rgba(0,0,0,0.06)"; }}
+              onBlurCapture={e => { e.currentTarget.style.borderColor = liveEmailError ? "rgba(220,38,38,0.5)" : "rgba(0,0,0,0.12)"; e.currentTarget.style.boxShadow = "none"; }}
+            />
+            {liveEmailError && (
+              <p style={{ fontSize: 11.5, color: "#DC2626", marginTop: 5 }}>{liveEmailError}</p>
+            )}
+          </div>
+
           <button
-            disabled
+            type="submit"
+            disabled={isInitializing}
             style={{
               width: "100%", padding: "14px 24px", borderRadius: 12,
-              background: "rgba(0,0,0,0.06)", color: "#aaa", border: "none",
-              fontSize: 15, fontWeight: 500, cursor: "not-allowed",
-              fontFamily: "var(--font-outfit)",
+              background: isInitializing ? "rgba(0,0,0,0.06)" : "#0A0A0A",
+              color: isInitializing ? "#aaa" : "#fff", border: "none",
+              fontSize: 15, fontWeight: 500,
+              cursor: isInitializing ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              transition: "background 140ms",
+              marginBottom: 16,
             }}
           >
-            Pay {formatAmount(payment.expectedAmount, payment.currency)}
+            {isInitializing ? (
+              <>
+                <Spinner />
+                Redirecting to Paystack…
+              </>
+            ) : (
+              `Pay ${formatAmount(payment.expectedAmount, payment.currency)}`
+            )}
           </button>
-        </div>
-
-        {/* Gateway notice */}
-        <div style={{
-          padding: "12px 14px", borderRadius: 10,
-          background: "rgba(202,138,4,0.05)", border: "1px solid rgba(202,138,4,0.18)",
-        }}>
-          <p style={{ fontSize: 12, color: "#854D0E", lineHeight: 1.55 }}>
-            <strong>Checkout not yet available.</strong> Payment gateway integration is pending. This page is a preview of what your client will see.
-          </p>
-        </div>
+        </form>
 
         {/* Trust line */}
-        <p style={{ marginTop: 24, fontSize: 11.5, color: "#ccc", textAlign: "center" }}>
-          Secured by Splitpay · Powered by Paystack
+        <p style={{ marginTop: 8, fontSize: 11.5, color: "#ccc", textAlign: "center" }}>
+          🔒 Secured by Splitpay · Powered by Paystack
         </p>
 
       </div>
@@ -246,7 +335,6 @@ function Shell({ children }: { children: React.ReactNode }) {
       minHeight: "100vh", background: "#F9F9F9",
       display: "flex", flexDirection: "column",
     }}>
-      {/* Minimal top nav */}
       <div style={{
         padding: "16px 24px",
         borderBottom: "1px solid rgba(0,0,0,0.06)",
@@ -259,7 +347,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         <span style={{ fontSize: 11.5, color: "#bbb" }}>Secure payment</span>
       </div>
 
-      {/* Content area */}
       <div style={{
         flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
         padding: "48px 24px",
@@ -286,5 +373,15 @@ function Bone({ width, height, radius = "6px" }: { width: number | string; heigh
     <div style={{ width, height, borderRadius: radius, background: "rgba(0,0,0,0.06)", animation: "sp-pulse 1.4s ease-in-out infinite", flexShrink: 0 }}>
       <style>{`@keyframes sp-pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }`}</style>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: "sp-spin 0.7s linear infinite" }}>
+      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+      <path d="M12 2a10 10 0 0 1 10 10" />
+      <style>{`@keyframes sp-spin { to { transform: rotate(360deg); } }`}</style>
+    </svg>
   );
 }

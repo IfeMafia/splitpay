@@ -1,8 +1,15 @@
 import { prisma } from '../../lib/prisma';
-import { WebhookPayloadDto } from './types';
 import { verifyPaystackWebhookSignature } from '../../lib/paystack';
 import { confirmPaymentTransaction } from '../payments/ledger.service';
 import { AppError } from '../../middleware/errorHandler';
+import { Prisma, WithdrawalStatus } from '@prisma/client';
+
+export interface WebhookPayloadDto {
+  provider: string;
+  eventType: string;
+  providerEventId: string;
+  rawPayload: any;
+}
 
 export async function processWebhookEvent(
   dto: WebhookPayloadDto,
@@ -19,62 +26,74 @@ export async function processWebhookEvent(
     }
   }
 
-  // 2. Idempotency Check: Prevent processing duplicate events
-  const existingEvent = await prisma.webhookEvent.findUnique({
-    where: { providerEventId: dto.providerEventId },
-  });
-
-  if (existingEvent && existingEvent.processed) {
-    return { processed: true, message: 'Event already processed (Idempotent)' };
+  // 2. Idempotency Guard: reserve event processing row (unique in DB for WEBHOOK + event id)
+  let webhookAuditLog: { id: string };
+  try {
+    webhookAuditLog = await prisma.auditLog.create({
+      data: {
+        entityType: 'WEBHOOK',
+        entityId: dto.providerEventId,
+        action: 'WEBHOOK_PROCESSING',
+        metadata: {
+          provider: dto.provider,
+        },
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { processed: true, message: 'Event already processed (Idempotent)' };
+    }
+    throw error;
   }
 
-  // Save/Upsert Webhook Event
-  const eventRecord = await prisma.webhookEvent.upsert({
-    where: { providerEventId: dto.providerEventId },
-    create: {
-      provider: dto.provider,
-      eventType: dto.eventType,
-      providerEventId: dto.providerEventId,
-      rawPayload: dto.rawPayload as any,
-      processed: false,
-    },
-    update: {
-      rawPayload: dto.rawPayload as any,
-    },
-  });
-
-  // 3. Event Dispatcher
-  if (dto.provider === 'paystack') {
-    if (dto.eventType === 'charge.success') {
-      const reference = dto.rawPayload?.data?.reference;
-      if (reference) {
-        await confirmPaymentTransaction(reference);
-      }
-    } else if (dto.eventType === 'transfer.success') {
-      const reference = dto.rawPayload?.data?.reference;
-      if (reference) {
-        await prisma.payoutTransaction.updateMany({
-          where: { providerReference: reference },
-          data: { status: 'SUCCESSFUL', completedAt: new Date() },
-        });
-      }
-    } else if (dto.eventType === 'transfer.failed' || dto.eventType === 'transfer.reversed') {
-      const reference = dto.rawPayload?.data?.reference;
-      if (reference) {
-        await prisma.payoutTransaction.updateMany({
-          where: { providerReference: reference },
-          data: { status: 'FAILED', failureReason: dto.rawPayload?.data?.reason || 'Transfer failed' },
-        });
+  try {
+    // 3. Event Dispatcher
+    if (dto.provider === 'paystack') {
+      if (dto.eventType === 'charge.success') {
+        const reference = dto.rawPayload?.data?.reference;
+        if (reference) {
+          await confirmPaymentTransaction(reference);
+        }
+      } else if (dto.eventType === 'transfer.success') {
+        const reference = dto.rawPayload?.data?.reference;
+        if (reference) {
+          await prisma.withdrawal.updateMany({
+            where: { providerReference: reference },
+            data: { status: WithdrawalStatus.SUCCESSFUL },
+          });
+        }
+      } else if (dto.eventType === 'transfer.failed' || dto.eventType === 'transfer.reversed') {
+        const reference = dto.rawPayload?.data?.reference;
+        if (reference) {
+          await prisma.withdrawal.updateMany({
+            where: { providerReference: reference },
+            data: {
+              status: dto.eventType === 'transfer.reversed' ? WithdrawalStatus.REVERSED : WithdrawalStatus.FAILED,
+              failureReason: dto.rawPayload?.data?.reason || 'Transfer failed',
+            },
+          });
+        }
       }
     }
+
+    // 4. Finalize audit log
+    await prisma.auditLog.update({
+      where: { id: webhookAuditLog.id },
+      data: {
+        action: dto.eventType,
+        metadata: {
+          provider: dto.provider,
+          rawPayload: dto.rawPayload as any,
+        },
+      },
+    });
+  } catch (error) {
+    await prisma.auditLog.deleteMany({
+      where: { id: webhookAuditLog.id, entityType: 'WEBHOOK', action: 'WEBHOOK_PROCESSING' },
+    });
+    throw error;
   }
-
-  // Mark event as processed
-  await prisma.webhookEvent.update({
-    where: { id: eventRecord.id },
-    data: { processed: true },
-  });
-
 
   return { processed: true, message: 'Webhook processed successfully' };
 }

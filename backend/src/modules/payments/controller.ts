@@ -1,7 +1,7 @@
-import { Request, Response, NextFunction } from "express";
-import * as paymentService from "./service";
-import { confirmPaymentTransaction } from "./ledger.service";
-import { AuthenticatedRequest } from "../../middleware/auth";
+import { Request, Response, NextFunction } from 'express';
+import * as paymentService from './service';
+import { confirmPaymentTransaction } from './ledger.service';
+import { AuthenticatedRequest } from '../../middleware/auth';
 
 export async function createPaymentLink(
   req: AuthenticatedRequest,
@@ -9,7 +9,15 @@ export async function createPaymentLink(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const result = await paymentService.createPaymentLink(req.body);
+    // Frontend sends { projectId, expectedAmount, currency, provider }
+    // Map to service signature
+    const { projectId, expectedAmount, currency, provider } = req.body;
+    const result = await paymentService.createPaymentLink({
+      projectId,
+      expectedAmount: Number(expectedAmount),
+      currency,
+      provider,
+    });
     res.status(201).json({ data: result });
   } catch (err) {
     next(err);
@@ -23,10 +31,7 @@ export async function initializePaystackPayment(
 ): Promise<void> {
   try {
     const token = req.params.token as string;
-    const result = await paymentService.initializePaymentTransactionByToken(
-      token,
-      req.body,
-    );
+    const result = await paymentService.initializePaymentTransactionByToken(token, req.body);
     res.status(200).json({ data: result });
   } catch (err) {
     next(err);
@@ -53,9 +58,7 @@ export async function getPaymentByToken(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const payment = await paymentService.getPaymentByToken(
-      req.params.token as string,
-    );
+    const payment = await paymentService.getPaymentByToken(req.params.token as string);
     res.status(200).json({ data: payment });
   } catch (err) {
     next(err);
@@ -68,9 +71,8 @@ export async function getProjectPayments(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const payments = await paymentService.getProjectPayments(
-      req.params.projectId as string,
-    );
+    const poolId = req.params.projectId as string;
+    const payments = await paymentService.getProjectPayments(poolId);
     res.status(200).json({ data: payments });
   } catch (err) {
     next(err);
@@ -84,15 +86,15 @@ export async function calculateFeePreview(
 ): Promise<void> {
   try {
     const { amount, platformFeePercent, providerFee, collaborators } = req.body;
-    const breakdown = paymentService.calculateFeePreview({
-      amount: Number(amount),
-      platformFeePercent: Number(platformFeePercent || 0),
-      providerFee: Number(providerFee || 0),
-      collaborators: collaborators || [],
-    });
+    const { calculateFinancialChain } = await import('./ledger.service');
+    const breakdown = calculateFinancialChain(
+      Number(amount),
+      Number(platformFeePercent ?? 0),
+      Number(providerFee ?? 0),
+      collaborators ?? [],
+    );
     res.status(200).json({ data: breakdown });
   } catch (err) {
     next(err);
   }
 }
-

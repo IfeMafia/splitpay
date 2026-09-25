@@ -3,40 +3,108 @@
 import Link from "next/link";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { formatAmount, formatRelativeTime, formatPercent } from "../../lib/format";
+import { PoolResponse, NotificationResponse } from "../../lib/contracts";
 
-const POOLS = [
+const DEMO_POOLS = [
   { id: "p1", name: "Brand Film — Pepsi Q4", status: "ACTIVE", currency: "NGN", totalAmount: 1800000, memberCount: 4, createdAt: new Date(Date.now() - 86400000 * 3) },
   { id: "p2", name: "Website Redesign — Kuda", status: "COMPLETED", currency: "NGN", totalAmount: 3200000, memberCount: 3, createdAt: new Date(Date.now() - 86400000 * 14) },
   { id: "p3", name: "Podcast Cover Art", status: "ACTIVE", currency: "NGN", totalAmount: 420000, memberCount: 2, createdAt: new Date(Date.now() - 86400000 * 1) },
 ];
 
-const ACTIVITY = [
+const DEMO_ACTIVITY = [
   { id: "t1", poolName: "Brand Film — Pepsi Q4", type: "Payment received", amount: 1800000, currency: "NGN", status: "SUCCESS", at: new Date(Date.now() - 3600000 * 2) },
   { id: "t2", poolName: "Website Redesign — Kuda", type: "Withdrawal processed", amount: 960000, currency: "NGN", status: "SUCCESS", at: new Date(Date.now() - 86400000 * 2) },
   { id: "t3", poolName: "Podcast Cover Art", type: "Payment received", amount: 420000, currency: "NGN", status: "PENDING", at: new Date(Date.now() - 3600000 * 5) },
   { id: "t4", poolName: "Brand Film — Pepsi Q4", type: "Withdrawal requested", amount: 450000, currency: "NGN", status: "PROCESSING", at: new Date(Date.now() - 3600000 * 1) },
 ];
 
-const ALLOCATIONS = [
+const DEMO_ALLOCATIONS = [
   { name: "Abraham O.", percent: 40, amount: 720000, currency: "NGN", status: "ACCEPTED" },
   { name: "Samkiel T.", percent: 35, amount: 630000, currency: "NGN", status: "ACCEPTED" },
   { name: "Tobi A.", percent: 25, amount: 450000, currency: "NGN", status: "INVITED" },
 ];
 
-const STATS = [
-  { label: "Total Received", value: formatAmount(5420000, "NGN"), sub: "Across all Pools" },
-  { label: "Pending Payouts", value: formatAmount(450000, "NGN"), sub: "1 withdrawal processing" },
-  { label: "Active Pools", value: "2", sub: "of 3 Pools total" },
-  { label: "Collaborators", value: "9", sub: "Across active Pools" },
-];
-
 interface Props {
   userName?: string;
+  pools?: PoolResponse[];
+  notifications?: NotificationResponse[];
 }
 
-export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
+export default function PopulatedDashboard({
+  userName = "User",
+  pools,
+  notifications = [],
+}: Props) {
+  const isRealData = Array.isArray(pools) && pools.length > 0;
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+
+  // Derive pools
+  const displayPools = isRealData
+    ? pools.map(p => ({
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        currency: p.currency,
+        totalAmount: Number((p as any).totalAmount || 0),
+        memberCount: p.memberCount ?? 1,
+        createdAt: new Date(p.createdAt),
+      }))
+    : DEMO_POOLS;
+
+  // Derive statistics
+  const totalVolume = displayPools.reduce((sum, p) => sum + p.totalAmount, 0);
+  const activeCount = displayPools.filter(p => p.status === "ACTIVE").length;
+  const totalMembers = displayPools.reduce((sum, p) => sum + p.memberCount, 0);
+  const primaryCurrency = displayPools[0]?.currency || "NGN";
+
+  const stats = [
+    {
+      label: "Total Volume",
+      value: formatAmount(totalVolume, primaryCurrency),
+      sub: `Across ${displayPools.length} ${displayPools.length === 1 ? "Pool" : "Pools"}`,
+    },
+    {
+      label: "Active Pools",
+      value: String(activeCount),
+      sub: `of ${displayPools.length} total`,
+    },
+    {
+      label: "Collaborators",
+      value: String(totalMembers),
+      sub: "Across all pools",
+    },
+    {
+      label: "Pending Payouts",
+      value: isRealData ? formatAmount(0, primaryCurrency) : formatAmount(450000, "NGN"),
+      sub: isRealData ? "0 processing" : "1 withdrawal processing",
+    },
+  ];
+
+  // Derive recent activity
+  const activities = isRealData && notifications.length > 0
+    ? notifications.slice(0, 5).map(n => ({
+        id: n.id,
+        poolName: n.title,
+        type: n.message,
+        amount: 0,
+        currency: primaryCurrency,
+        status: "SUCCESS",
+        at: new Date(n.createdAt),
+      }))
+    : isRealData
+    ? displayPools.slice(0, 4).map(p => ({
+        id: `act-${p.id}`,
+        poolName: p.name,
+        type: "Pool created",
+        amount: p.totalAmount,
+        currency: p.currency,
+        status: p.status,
+        at: p.createdAt,
+      }))
+    : DEMO_ACTIVITY;
+
+  const allocations = DEMO_ALLOCATIONS;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 32, maxWidth: 1100 }}>
@@ -76,7 +144,7 @@ export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
           @media (max-width: 1000px) { .dash-stats { grid-template-columns: repeat(2,1fr) !important; } }
           @media (max-width: 520px)  { .dash-stats { grid-template-columns: 1fr !important; } }
         `}</style>
-        {STATS.map(s => (
+        {stats.map(s => (
           <div
             key={s.label}
             style={{
@@ -97,25 +165,25 @@ export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
         ))}
       </div>
 
-      {/* Active Pools */}
+      {/* Pools List */}
       <section>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.07em", textTransform: "uppercase", color: "#bbb" }}>
-            Active Pools
+            {isRealData ? "Your Pools" : "Active Pools"}
           </p>
           <Link href="/dashboard/pools" style={{ fontSize: 12, color: "#888", textDecoration: "none" }}>
             View all →
           </Link>
         </div>
         <div style={{ border: "1px solid rgba(0,0,0,0.07)", borderRadius: 12, background: "#fff", overflow: "hidden" }}>
-          {POOLS.map((pool, i) => (
+          {displayPools.map((pool, i) => (
             <Link
               key={pool.id}
               href={`/dashboard/pools/${pool.id}`}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "14px 18px", gap: 12,
-                borderBottom: i < POOLS.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+                borderBottom: i < displayPools.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
                 textDecoration: "none",
                 transition: "background 100ms",
               }}
@@ -138,14 +206,16 @@ export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
                     {pool.name}
                   </div>
                   <div style={{ fontSize: 11.5, color: "#aaa", marginTop: 2 }}>
-                    {pool.memberCount} members · {formatRelativeTime(pool.createdAt)}
+                    {pool.memberCount} {pool.memberCount === 1 ? "member" : "members"} · {formatRelativeTime(pool.createdAt)}
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-                  {formatAmount(pool.totalAmount, pool.currency)}
-                </span>
+                {pool.totalAmount > 0 && (
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                    {formatAmount(pool.totalAmount, pool.currency)}
+                  </span>
+                )}
                 <StatusBadge status={pool.status} />
               </div>
             </Link>
@@ -153,7 +223,7 @@ export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
         </div>
       </section>
 
-      {/* Activity + Allocation */}
+      {/* Activity + Split Breakdown */}
       <div className="dash-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16, alignItems: "start" }}>
         <style>{`@media (max-width: 900px) { .dash-grid-2 { grid-template-columns: 1fr !important; } }`}</style>
 
@@ -163,90 +233,120 @@ export default function PopulatedDashboard({ userName = "Abraham" }: Props) {
             Recent Activity
           </p>
           <div style={{ border: "1px solid rgba(0,0,0,0.07)", borderRadius: 12, background: "#fff", overflow: "hidden" }}>
-            {ACTIVITY.map((item, i) => (
-              <div
-                key={item.id}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "13px 18px", gap: 12,
-                  borderBottom: i < ACTIVITY.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", marginBottom: 2 }}>{item.type}</div>
-                  <div style={{ fontSize: 11.5, color: "#aaa", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.poolName} · {formatRelativeTime(item.at)}
+            {activities.length === 0 ? (
+              <div style={{ padding: "24px 18px", textAlign: "center", color: "#aaa", fontSize: 13 }}>
+                No recent activity yet.
+              </div>
+            ) : (
+              activities.map((item, i) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "13px 18px", gap: 12,
+                    borderBottom: i < activities.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", marginBottom: 2 }}>{item.type}</div>
+                    <div style={{ fontSize: 11.5, color: "#aaa", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {item.poolName} · {formatRelativeTime(item.at)}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                    {item.amount > 0 && (
+                      <span style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                        {formatAmount(item.amount, item.currency)}
+                      </span>
+                    )}
+                    <StatusBadge status={item.status} />
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-                    {formatAmount(item.amount, item.currency)}
-                  </span>
-                  <StatusBadge status={item.status} />
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </section>
 
         {/* Allocation */}
         <section>
           <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.07em", textTransform: "uppercase", color: "#bbb", marginBottom: 12 }}>
-            Latest Split · Pepsi Q4
+            {isRealData ? "Latest Pool Overview" : "Latest Split · Pepsi Q4"}
           </p>
           <div style={{ border: "1px solid rgba(0,0,0,0.07)", borderRadius: 12, background: "#fff", overflow: "hidden" }}>
-            {ALLOCATIONS.map((a, i) => (
-              <div
-                key={a.name}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "13px 16px", gap: 10,
-                  borderBottom: i < ALLOCATIONS.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{
-                    width: 26, height: 26, borderRadius: "50%",
-                    background: "#0A0A0A", color: "#fff",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontWeight: 600, flexShrink: 0,
-                  }}>
-                    {a.name[0]}
+            {isRealData ? (
+              <div style={{ padding: 18 }}>
+                <p style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", marginBottom: 6 }}>
+                  {displayPools[0]?.name}
+                </p>
+                <p style={{ fontSize: 12, color: "#777", lineHeight: 1.5, marginBottom: 14 }}>
+                  Status: <strong>{displayPools[0]?.status}</strong> · {displayPools[0]?.memberCount} members
+                </p>
+                <Link
+                  href={`/dashboard/pools/${displayPools[0]?.id}`}
+                  style={{
+                    display: "inline-block", fontSize: 12.5, fontWeight: 500,
+                    color: "#0A0A0A", textDecoration: "none",
+                  }}
+                >
+                  Manage Pool & Splits →
+                </Link>
+              </div>
+            ) : (
+              <>
+                {allocations.map((a, i) => (
+                  <div
+                    key={a.name}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "13px 16px", gap: 10,
+                      borderBottom: i < allocations.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{
+                        width: 26, height: 26, borderRadius: "50%",
+                        background: "#0A0A0A", color: "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 10, fontWeight: 600, flexShrink: 0,
+                      }}>
+                        {a.name[0]}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: "#0A0A0A" }}>{a.name}</div>
+                        <div style={{ fontSize: 11, color: "#aaa" }}>{formatPercent(a.percent)}</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                        {formatAmount(a.amount, a.currency)}
+                      </div>
+                      <div style={{ marginTop: 3 }}>
+                        <StatusBadge status={a.status} />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 500, color: "#0A0A0A" }}>{a.name}</div>
-                    <div style={{ fontSize: 11, color: "#aaa" }}>{formatPercent(a.percent)}</div>
+                ))}
+                {/* Split bar */}
+                <div style={{ padding: "12px 16px", borderTop: "1px solid rgba(0,0,0,0.05)" }}>
+                  <div style={{ display: "flex", height: 4, borderRadius: 4, overflow: "hidden", gap: 2 }}>
+                    {allocations.map((a, i) => {
+                      const colors = ["#0A0A0A", "#555", "#ccc"];
+                      return (
+                        <div
+                          key={i}
+                          title={`${a.name} — ${a.percent}%`}
+                          style={{ flex: a.percent, background: colors[i], borderRadius: 4 }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+                    <span style={{ fontSize: 10.5, color: "#aaa" }}>Split breakdown</span>
+                    <span style={{ fontSize: 10.5, color: "#aaa" }}>Brand Film · Pepsi Q4</span>
                   </div>
                 </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-                    {formatAmount(a.amount, a.currency)}
-                  </div>
-                  <div style={{ marginTop: 3 }}>
-                    <StatusBadge status={a.status} />
-                  </div>
-                </div>
-              </div>
-            ))}
-            {/* Split bar */}
-            <div style={{ padding: "12px 16px", borderTop: "1px solid rgba(0,0,0,0.05)" }}>
-              <div style={{ display: "flex", height: 4, borderRadius: 4, overflow: "hidden", gap: 2 }}>
-                {ALLOCATIONS.map((a, i) => {
-                  const colors = ["#0A0A0A", "#555", "#ccc"];
-                  return (
-                    <div
-                      key={i}
-                      title={`${a.name} — ${a.percent}%`}
-                      style={{ flex: a.percent, background: colors[i], borderRadius: 4 }}
-                    />
-                  );
-                })}
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-                <span style={{ fontSize: 10.5, color: "#aaa" }}>Split breakdown</span>
-                <span style={{ fontSize: 10.5, color: "#aaa" }}>Brand Film · Pepsi Q4</span>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         </section>
       </div>

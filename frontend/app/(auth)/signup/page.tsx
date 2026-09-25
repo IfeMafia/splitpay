@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { setToken } from "../../lib/auth";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { setToken, setUser, isAuthenticated } from "../../lib/auth";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -21,8 +21,22 @@ interface FormErrors {
   defaultCurrency?: string;
 }
 
+
 export default function SignupPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Extract invitation token from redirect param, e.g. ?redirect=/invitations/some-token
+  const redirectTo = searchParams.get("redirect") ?? "/dashboard";
+  const invitationTokenMatch = redirectTo.match(/^\/invitations\/([^/]+)$/);
+  const invitationToken = invitationTokenMatch ? invitationTokenMatch[1] : undefined;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,9 +45,16 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [country, setCountry] = useState("NG");
   const [defaultCurrency, setDefaultCurrency] = useState("NGN");
+  const [showPassword, setShowPassword] = useState(false);
 
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [formErrors, setFormErrors] = useState<FormErrors>({});
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      router.replace(redirectTo);
+    }
+  }, [router, redirectTo]);
 
   function validate(): FormErrors {
     const errs: FormErrors = {};
@@ -41,7 +62,7 @@ export default function SignupPage() {
     if (!email.trim()) errs.email = "Email is required.";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Enter a valid email address.";
     if (!password) errs.password = "Password is required.";
-    else if (password.length < 6) errs.password = "Password must be at least 6 characters.";
+    else if (password.length < 8) errs.password = "Password must be at least 8 characters.";
     if (!country.trim() || country.length !== 2) errs.country = "Enter a 2-letter country code (e.g. NG).";
     if (!defaultCurrency.trim() || defaultCurrency.length !== 3) errs.defaultCurrency = "Enter a 3-letter currency code (e.g. NGN).";
     return errs;
@@ -65,8 +86,8 @@ export default function SignupPage() {
     setError("");
 
     try {
-      // Step 1: register
-      const regRes = await fetch(`${BASE_URL}/users/register`, {
+      // Step 1: register (pass invitation token so backend can auto-accept)
+      const regRes = await fetch(`${BASE_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -75,25 +96,40 @@ export default function SignupPage() {
           fullName: fullName.trim(),
           defaultCurrency: defaultCurrency.trim().toUpperCase(),
           country: country.trim().toUpperCase(),
+          ...(invitationToken ? { invitationToken } : {}),
         }),
       });
       const regBody = await regRes.json();
       if (!regRes.ok) throw new Error(regBody?.message ?? `Error ${regRes.status}`);
 
-      // Step 2: auto-login to get token
-      const loginRes = await fetch(`${BASE_URL}/users/login`, {
+      // Step 2: the register endpoint returns a token and user directly
+      const regData = regBody.data ?? regBody;
+      if (regData?.token) {
+        setToken(regData.token);
+        if (regData?.user) {
+          setUser(regData.user);
+        }
+        router.replace(redirectTo);
+        return;
+      }
+
+      // Fallback: auto-login if register didn't return token
+      const loginRes = await fetch(`${BASE_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
       });
       const loginBody = await loginRes.json();
       if (!loginRes.ok) {
-        // Registration succeeded but auto-login failed — redirect to login
-        router.replace("/login?registered=1");
+        router.replace(`/login?registered=1${invitationToken ? `&redirect=${encodeURIComponent(redirectTo)}` : ""}`);
         return;
       }
-      setToken(loginBody.data.token);
-      router.replace("/dashboard");
+      setToken(loginBody.data?.token ?? loginBody.token);
+      const loggedUser = loginBody.data?.user ?? loginBody.user;
+      if (loggedUser) {
+        setUser(loggedUser);
+      }
+      router.replace(redirectTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
     } finally {
@@ -137,8 +173,8 @@ export default function SignupPage() {
 
       <form onSubmit={handleSubmit} noValidate style={{ display: "flex", flexDirection: "column", gap: 18 }}>
 
-        {/* Full name */}
-        <Field label="Full name" error={liveErrors.fullName ?? formErrors.fullName}>
+        {/* Full Name */}
+        <Field label="Full name" htmlFor="fullName" error={liveErrors.fullName ?? formErrors.fullName}>
           <input
             id="fullName"
             type="text"
@@ -154,7 +190,7 @@ export default function SignupPage() {
         </Field>
 
         {/* Email */}
-        <Field label="Email address" error={liveErrors.email ?? formErrors.email}>
+        <Field label="Email address" htmlFor="email" error={liveErrors.email ?? formErrors.email}>
           <input
             id="email"
             type="email"
@@ -170,24 +206,49 @@ export default function SignupPage() {
         </Field>
 
         {/* Password */}
-        <Field label="Password" error={liveErrors.password ?? formErrors.password}>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onBlur={() => touch("password")}
-            placeholder="At least 6 characters"
-            disabled={loading}
-            autoComplete="new-password"
-            style={fieldInput(!!(liveErrors.password ?? formErrors.password))}
-            onFocus={e => focusRing(e, !!(liveErrors.password ?? formErrors.password))}
-          />
+        <Field label="Password" htmlFor="password" error={liveErrors.password ?? formErrors.password}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onBlur={() => touch("password")}
+              placeholder="At least 8 characters"
+              disabled={loading}
+              autoComplete="new-password"
+              style={{ ...fieldInput(!!(liveErrors.password ?? formErrors.password)), paddingRight: "44px" }}
+              onFocus={e => focusRing(e, !!(liveErrors.password ?? formErrors.password))}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute",
+                right: 12,
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "6px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#777",
+                borderRadius: "6px",
+                transition: "color 140ms",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#0A0A0A"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#777"; }}
+            >
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </Field>
 
         {/* Country + Currency row */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <Field label="Country" hint="2-letter code" error={liveErrors.country ?? formErrors.country}>
+          <Field label="Country" htmlFor="country" hint="2-letter code" error={liveErrors.country ?? formErrors.country}>
             <input
               id="country"
               type="text"
@@ -202,7 +263,7 @@ export default function SignupPage() {
             />
           </Field>
 
-          <Field label="Currency" hint="3-letter code" error={liveErrors.defaultCurrency ?? formErrors.defaultCurrency}>
+          <Field label="Currency" htmlFor="defaultCurrency" hint="3-letter code" error={liveErrors.defaultCurrency ?? formErrors.defaultCurrency}>
             <input
               id="defaultCurrency"
               type="text"
@@ -259,11 +320,11 @@ export default function SignupPage() {
   );
 }
 
-function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, hint, error, children }: { label: string; htmlFor?: string; hint?: string; error?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <label style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>{label}</label>
+        <label htmlFor={htmlFor} style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>{label}</label>
         {hint && <span style={{ fontSize: 11, color: "#bbb" }}>{hint}</span>}
       </div>
       {children}
@@ -295,3 +356,24 @@ function Spinner() {
     </svg>
   );
 }
+
+function EyeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  );
+}
+

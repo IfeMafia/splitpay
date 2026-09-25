@@ -13,23 +13,36 @@ import {
   WithdrawalResponse,
 } from './contracts';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5050/api';
 
 class ApiClient {
   private token: string | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
-      this.token = localStorage.getItem('splitpay_token');
+      this.token = localStorage.getItem('sp_token') || localStorage.getItem('splitpay_token');
     }
+  }
+
+  getToken(): string | null {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('sp_token') || localStorage.getItem('splitpay_token');
+      if (stored) {
+        this.token = stored;
+        return stored;
+      }
+    }
+    return this.token;
   }
 
   setToken(token: string | null) {
     this.token = token;
     if (typeof window !== 'undefined') {
       if (token) {
+        localStorage.setItem('sp_token', token);
         localStorage.setItem('splitpay_token', token);
       } else {
+        localStorage.removeItem('sp_token');
         localStorage.removeItem('splitpay_token');
       }
     }
@@ -41,8 +54,9 @@ class ApiClient {
       ...(options.headers || {}),
     };
 
-    if (this.token) {
-      (headers as Record<string, string>)['Authorization'] = `Bearer ${this.token}`;
+    const token = this.getToken();
+    if (token) {
+      (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
     }
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
