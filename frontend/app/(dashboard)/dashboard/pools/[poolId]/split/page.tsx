@@ -11,7 +11,7 @@ import { formatAmount, formatPercent, shortId } from "../../../../../lib/format"
 interface Pool {
   id: string;
   name: string;
-  totalAmount: number;
+  memberCount: number;
   currency: string;
 }
 
@@ -81,6 +81,7 @@ export default function SplitPage({ params }: Props) {
   
   const [breakdown, setBreakdown] = useState<FinancialChainBreakdown | null>(null);
   const [calculating, setCalculating] = useState(false);
+  const [previewAmount, setPreviewAmount] = useState(100000);
 
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
@@ -166,7 +167,7 @@ export default function SplitPage({ params }: Props) {
         }));
 
         const data = await api.post<FinancialChainBreakdown>("/payments/calculate", {
-          amount: pool!.totalAmount,
+          amount: previewAmount,
           platformFeePercent: 1.5,
           providerFee: 0,
           collaborators: collabConfig
@@ -188,7 +189,7 @@ export default function SplitPage({ params }: Props) {
       isCancelled = true;
       clearTimeout(t);
     };
-  }, [splitType, customShares, collaborators, pool, pageState, equalPercentage, isCustomValid]);
+  }, [splitType, customShares, collaborators, pool, pageState, equalPercentage, isCustomValid, previewAmount]);
 
   const handleCustomChange = (memberId: string, val: string) => {
     const num = parseFloat(val);
@@ -392,6 +393,16 @@ export default function SplitPage({ params }: Props) {
             Financial Breakdown Preview
             {calculating && <Spinner />}
           </h2>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+            <span style={{ fontSize: 13, color: "#555" }}>Simulated Amount:</span>
+            <input 
+              type="number" 
+              value={previewAmount} 
+              onChange={e => setPreviewAmount(Number(e.target.value) || 0)} 
+              style={{ width: 120, padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd", fontSize: 13, outline: "none" }}
+            />
+          </div>
           
           {(!breakdown && !calculating && splitType === "CUSTOM" && !isCustomValid) && (
             <p style={{ fontSize: 13, color: "#888" }}>Resolve percentage errors to view the breakdown.</p>

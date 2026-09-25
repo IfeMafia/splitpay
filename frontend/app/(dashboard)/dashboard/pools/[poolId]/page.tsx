@@ -12,7 +12,7 @@ interface Pool {
   id: string;
   name: string;
   description: string | null;
-  totalAmount: number;
+  memberCount: number;
   currency: string;
   status: string;
   createdAt: string;
@@ -143,16 +143,15 @@ export default function PoolWorkspacePage({ params }: Props) {
           </div>
         </div>
 
-        {/* Expected amount pill */}
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "flex-end",
           gap: 3, flexShrink: 0,
         }}>
           <span style={{ fontSize: 10.5, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", color: "#bbb" }}>
-            Expected
+            Team Size
           </span>
           <span style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.03em", color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-            {formatAmount(pool.totalAmount, pool.currency)}
+            {pool.memberCount} {pool.memberCount === 1 ? "Member" : "Members"}
           </span>
           {confirmedPayment && (
             <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 500 }}>

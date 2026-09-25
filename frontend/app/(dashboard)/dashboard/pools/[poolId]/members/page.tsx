@@ -33,11 +33,17 @@ interface Props {
 
 type PageState = "loading" | "ready" | "error";
 type InviteState = "idle" | "submitting" | "success" | "error";
+type CodeInviteState = "idle" | "generating" | "success" | "error";
 
 interface FormErrors {
   email?: string;
   role?: string;
   splitPercentage?: string;
+}
+
+interface InviteCode {
+  code: string;
+  expiresAt?: string;
 }
 
 /* ─── Page ────────────────────────────────────── */
@@ -60,6 +66,13 @@ export default function MembersPage({ params }: Props) {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [inviteState, setInviteState] = useState<InviteState>("idle");
   const [inviteError, setInviteError] = useState("");
+
+  // Invite code state
+  const [inviteCode, setInviteCode] = useState<InviteCode | null>(null);
+  const [codeInviteState, setCodeInviteState] = useState<CodeInviteState>("idle");
+  const [codeInviteError, setCodeInviteError] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [showCodeSection, setShowCodeSection] = useState(false);
 
   // Remove state
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -150,6 +163,34 @@ export default function MembersPage({ params }: Props) {
     }
   }
 
+  async function handleGenerateCode() {
+    setCodeInviteState("generating");
+    setCodeInviteError("");
+    try {
+      // Create a CODE-type invitation (no email = invite code)
+      const result = await api.post<Collaborator>("/collaborators", {
+        projectId: poolId,
+        role: "Collaborator",
+        splitPercentage: 0,
+      });
+      // The returned id is the UUID token which serves as the invite code
+      setInviteCode({ code: result.id });
+      setCodeInviteState("success");
+      setShowCodeSection(true);
+    } catch (err) {
+      setCodeInviteError(err instanceof Error ? err.message : "Failed to generate invite code.");
+      setCodeInviteState("error");
+    }
+  }
+
+  async function handleCopyCode() {
+    if (!inviteCode) return;
+    const inviteLink = `${window.location.origin}/invitations/${inviteCode.code}`;
+    await navigator.clipboard.writeText(inviteLink);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
   const totalSplit = collaborators.reduce((s, c) => s + Number(c.splitPercentage), 0);
   const isSubmitting = inviteState === "submitting";
 
@@ -182,26 +223,148 @@ export default function MembersPage({ params }: Props) {
           </h1>
         </div>
         {!showForm && (
-          <button
-            onClick={() => setShowForm(true)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 7,
-              padding: "9px 18px", borderRadius: 100,
-              background: "#0A0A0A", color: "#fff", border: "none",
-              fontSize: 13, fontWeight: 500, cursor: "pointer",
-              transition: "background 140ms", flexShrink: 0,
-              fontFamily: "var(--font-sans)",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Invite collaborator
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={() => setShowForm(true)}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "9px 18px", borderRadius: 100,
+                background: "#0A0A0A", color: "#fff", border: "none",
+                fontSize: 13, fontWeight: 500, cursor: "pointer",
+                transition: "background 140ms", flexShrink: 0,
+                fontFamily: "var(--font-sans)",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Invite by email
+            </button>
+            <button
+              onClick={() => setShowCodeSection(s => !s)}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "9px 18px", borderRadius: 100,
+                background: "none", color: "#555", border: "1px solid rgba(0,0,0,0.12)",
+                fontSize: 13, fontWeight: 500, cursor: "pointer",
+                transition: "background 140ms, border-color 140ms", flexShrink: 0,
+                fontFamily: "var(--font-sans)",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              Invite code
+            </button>
+          </div>
         )}
       </div>
+
+      {/* ── Invite code section ── */}
+      {showCodeSection && !showForm && (
+        <div style={{
+          marginBottom: 24, padding: "20px 22px", borderRadius: 14,
+          border: "1px solid rgba(0,0,0,0.10)", background: "#fff",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14, gap: 12 }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 500, color: "#0A0A0A", marginBottom: 3 }}>Invite by code</p>
+              <p style={{ fontSize: 12.5, color: "#999" }}>
+                Generate a shareable link. Anyone with the link can join this Pool.
+              </p>
+            </div>
+            <button
+              onClick={() => { setShowCodeSection(false); setInviteCode(null); setCodeInviteState("idle"); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#bbb", padding: 4, flexShrink: 0 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {codeInviteState === "error" && codeInviteError && (
+            <div style={{
+              display: "flex", alignItems: "flex-start", gap: 9,
+              padding: "10px 14px", borderRadius: 8, marginBottom: 14,
+              background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
+            }}>
+              <p style={{ fontSize: 12.5, color: "#991B1B" }}>{codeInviteError}</p>
+            </div>
+          )}
+
+          {inviteCode ? (
+            <div>
+              <p style={{ fontSize: 11.5, color: "#bbb", marginBottom: 8 }}>Invite link</p>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 14px", borderRadius: 9,
+                border: "1px solid rgba(0,0,0,0.10)", background: "#FAFAFA",
+              }}>
+                <span style={{
+                  flex: 1, fontSize: 12, fontFamily: "var(--font-mono)", color: "#555",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {typeof window !== "undefined" ? `${window.location.origin}/invitations/${inviteCode.code}` : `/invitations/${inviteCode.code}`}
+                </span>
+                <button
+                  onClick={handleCopyCode}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "6px 12px", borderRadius: 7, flexShrink: 0,
+                    background: codeCopied ? "rgba(22,163,74,0.1)" : "#0A0A0A",
+                    color: codeCopied ? "#16A34A" : "#fff",
+                    border: "none", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+                    transition: "background 200ms, color 200ms",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  {codeCopied ? (
+                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> Copied</>
+                  ) : (
+                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy link</>
+                  )}
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: "#ccc", marginTop: 8 }}>Link expires in 7 days. Share it directly with your collaborator.</p>
+              <button
+                onClick={handleGenerateCode}
+                disabled={codeInviteState === "generating"}
+                style={{
+                  marginTop: 12, display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "7px 14px", borderRadius: 8,
+                  background: "none", border: "1px solid rgba(0,0,0,0.12)",
+                  color: "#888", fontSize: 12, cursor: "pointer",
+                  fontFamily: "var(--font-sans)",
+                }}
+              >
+                Generate new link
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleGenerateCode}
+              disabled={codeInviteState === "generating"}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "10px 20px", borderRadius: 100,
+                background: codeInviteState === "generating" ? "#555" : "#0A0A0A",
+                color: "#fff", border: "none",
+                fontSize: 13, fontWeight: 500,
+                cursor: codeInviteState === "generating" ? "not-allowed" : "pointer",
+                fontFamily: "var(--font-sans)",
+              }}
+            >
+              {codeInviteState === "generating" ? <><Spinner /> Generating…</> : "Generate invite link"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Invite form ── */}
       {showForm && (

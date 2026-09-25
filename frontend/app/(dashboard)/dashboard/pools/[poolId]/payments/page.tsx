@@ -13,7 +13,7 @@ interface Pool {
   name: string;
   ownerId: string;
   currency: string;
-  totalAmount: number;
+  memberCount: number;
 }
 
 interface Payment {
@@ -55,6 +55,7 @@ export default function PaymentsPage({ params }: Props) {
 
   const [showForm, setShowForm] = useState(false);
   const [provider] = useState("paystack");
+  const [expectedAmount, setExpectedAmount] = useState("");
   const [createState, setCreateState] = useState<CreateState>("idle");
   const [createError, setCreateError] = useState("");
 
@@ -81,12 +82,18 @@ export default function PaymentsPage({ params }: Props) {
 
   async function handleCreate() {
     if (!pool) return;
+    const amount = Number(expectedAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setCreateError("Please enter a valid amount.");
+      setCreateState("error");
+      return;
+    }
     setCreateState("submitting");
     setCreateError("");
     try {
       const result = await api.post<CreateResult>("/payments/link", {
         projectId: poolId,
-        expectedAmount: Number(pool.totalAmount),
+        expectedAmount: amount,
         currency: pool.currency,
         provider,
       });
@@ -202,11 +209,24 @@ export default function PaymentsPage({ params }: Props) {
             marginBottom: 16, display: "flex", flexDirection: "column", gap: 6,
           }}>
             <Row label="Pool">{pool.name}</Row>
-            <Row label="Expected amount">
-              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>
-                {formatAmount(pool.totalAmount, pool.currency)}
-              </span>
-            </Row>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span style={{ fontSize: 12, color: "#bbb" }}>Expected amount</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 13, color: "#555", fontWeight: 500 }}>{pool.currency}</span>
+                <input
+                  type="number"
+                  value={expectedAmount}
+                  onChange={e => setExpectedAmount(e.target.value)}
+                  placeholder="0.00"
+                  style={{
+                    width: 120, padding: "6px 8px", borderRadius: 6,
+                    border: "1px solid rgba(0,0,0,0.12)", background: "#fff",
+                    fontSize: 13, fontFamily: "var(--font-mono)", textAlign: "right",
+                    outline: "none"
+                  }}
+                />
+              </div>
+            </div>
             <Row label="Currency">{pool.currency}</Row>
             <Row label="Payment provider">Paystack</Row>
           </div>
