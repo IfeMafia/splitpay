@@ -42,3 +42,17 @@ export async function removeCollaborator(req: AuthenticatedRequest, res: Respons
     next(err);
   }
 }
+
+/**
+ * POST /collaborators/leave/:poolId
+ * Allows a collaborator to leave a pool.
+ */
+export async function leavePool(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    await collaboratorService.leavePool(req.params.poolId as string, userId);
+    res.status(200).json({ message: 'Successfully left the pool' });
+  } catch (err) {
+    next(err);
+  }
+}

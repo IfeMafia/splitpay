@@ -287,8 +287,17 @@ export async function getProjectCollaborators(poolId: string, actorId: string) {
  * Accepts either an invitation token (for pending invites) or a PoolMember id.
  */
 export async function removeCollaborator(id: string, actorId: string) {
-  // Try treating id as an invitation token first
-  const invitation = await prisma.poolInvitation.findUnique({ where: { token: id } });
+  // Try treating id as an invitation id, token, or code first
+  const invitation = await prisma.poolInvitation.findFirst({
+    where: {
+      OR: [
+        { id },
+        { token: id },
+        { code: id },
+      ],
+    },
+  });
+
   if (invitation) {
     const pool = await prisma.pool.findUnique({ where: { id: invitation.poolId } });
     if (pool?.ownerId !== actorId) throw new AppError(403, 'Only the pool owner can revoke invitations', 'FORBIDDEN');
@@ -305,7 +314,9 @@ export async function removeCollaborator(id: string, actorId: string) {
   if (!member) throw new AppError(404, 'Collaborator not found', 'NOT_FOUND');
 
   const pool = await prisma.pool.findUnique({ where: { id: member.poolId } });
-  if (pool?.ownerId !== actorId) throw new AppError(403, 'Only the pool owner can remove members', 'FORBIDDEN');
+  if (pool?.ownerId !== actorId && member.userId !== actorId) {
+    throw new AppError(403, 'Only the pool owner can remove members', 'FORBIDDEN');
+  }
 
   if (member.role === PoolRole.OWNER) {
     const ownerCount = await prisma.poolMember.count({ where: { poolId: member.poolId, role: PoolRole.OWNER } });
@@ -321,6 +332,37 @@ export async function removeCollaborator(id: string, actorId: string) {
       action: 'MEMBER_REMOVED',
       actorId,
       metadata: { poolId: member.poolId },
+    },
+  });
+}
+
+/**
+ * Allow a collaborator to leave a pool.
+ */
+export async function leavePool(poolId: string, actorId: string) {
+  const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+  if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
+  if (pool.ownerId === actorId) {
+    throw new AppError(400, 'Pool owner cannot leave the pool.', 'OWNER_CANNOT_LEAVE');
+  }
+
+  const member = await prisma.poolMember.findUnique({
+    where: { poolId_userId: { poolId, userId: actorId } },
+  });
+
+  if (!member) {
+    throw new AppError(404, 'You are not a member of this Pool', 'NOT_MEMBER');
+  }
+
+  await prisma.poolMember.delete({ where: { id: member.id } });
+
+  await prisma.auditLog.create({
+    data: {
+      entityType: 'POOL_MEMBER',
+      entityId: member.id,
+      action: 'MEMBER_LEFT',
+      actorId,
+      metadata: { poolId, userId: actorId },
     },
   });
 }

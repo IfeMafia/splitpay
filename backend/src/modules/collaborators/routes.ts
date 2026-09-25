@@ -16,4 +16,7 @@ router.get('/project/:projectId', collaboratorController.getProjectCollaborators
 // Revoke invitation or remove a pool member by id
 router.delete('/:id', collaboratorController.removeCollaborator);
 
+// Collaborator leave pool route
+router.post('/leave/:poolId', collaboratorController.leavePool);
+
 export default router;
