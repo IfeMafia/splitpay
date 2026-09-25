@@ -130,16 +130,22 @@ export async function updatePaymentLink(
 }
 
 export async function deletePaymentLink(poolId: string, linkId: string, userId: string): Promise<void> {
-  const existing = await prisma.paymentLink.findUnique({
-    where: { id: linkId },
+  const existing = await prisma.paymentLink.findFirst({
+    where: {
+      OR: [
+        { id: linkId },
+        { token: linkId },
+      ],
+      poolId,
+    },
   });
 
-  if (!existing || existing.poolId !== poolId) {
+  if (!existing) {
     throw new AppError(404, 'Payment link not found', 'NOT_FOUND');
   }
 
   await prisma.paymentLink.update({
-    where: { id: linkId },
+    where: { id: existing.id },
     data: { isActive: false },
   });
 

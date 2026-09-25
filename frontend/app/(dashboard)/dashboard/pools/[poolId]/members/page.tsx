@@ -6,6 +6,8 @@ import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatDate, formatRelativeTime, formatPercent, shortId } from "../../../../../lib/format";
 import { toast } from "@/app/components/Toast";
+import { getUser } from "@/app/lib/auth";
+import ConfirmModal from "@/app/components/ui/ConfirmModal";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -78,6 +80,25 @@ export default function MembersPage({ params }: Props) {
   // Remove state
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  // Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    isDestructive?: boolean;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
+
+  const currentUser = getUser();
+  const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
+
   useEffect(() => {
     load();
   }, [poolId]);
@@ -90,7 +111,15 @@ export default function MembersPage({ params }: Props) {
         api.get<Collaborator[]>(`/collaborators/project/${poolId}`).catch(() => [] as Collaborator[]),
       ]);
       setPool(poolData);
-      setCollaborators(Array.isArray(collabData) ? collabData : []);
+      const list = Array.isArray(collabData) ? collabData : [];
+      setCollaborators(list);
+
+      // Check if there is an active invite code in the collaborators list
+      const codeItem = list.find((c: any) => c.status === "INVITED" && !c.invitedEmail);
+      if (codeItem) {
+        setInviteCode({ code: (codeItem as any).code || codeItem.id });
+      }
+
       setPageState("ready");
     } catch (err) {
       if (err instanceof ApiError) setErrorStatus(err.status);
@@ -138,7 +167,6 @@ export default function MembersPage({ params }: Props) {
       });
       setCollaborators(prev => [...prev, newCollab]);
       setInviteState("success");
-      // Reset form after short delay and reload from server
       setTimeout(() => {
         setEmail(""); setRole("Collaborator"); setSplitPct("");
         setTouched({}); setFormErrors({});
@@ -151,24 +179,77 @@ export default function MembersPage({ params }: Props) {
     }
   }
 
-  async function handleRemove(id: string) {
-    if (!confirm("Remove this collaborator from the Pool?")) return;
-    setRemovingId(id);
-    try {
-      await api.delete<void>(`/collaborators/${id}`);
-      setCollaborators(prev => prev.filter(c => c.id !== id));
-    } catch (err) {
-      toast.error(err, "Failed to remove collaborator.");
-    } finally {
-      setRemovingId(null);
-    }
+  function handleRemovePrompt(id: string, nameOrEmail: string) {
+    setModalConfig({
+      isOpen: true,
+      title: "Remove Collaborator",
+      message: `Are you sure you want to remove ${nameOrEmail} from this Pool?`,
+      confirmText: "Remove",
+      isDestructive: true,
+      onConfirm: async () => {
+        setRemovingId(id);
+        try {
+          await api.delete<void>(`/collaborators/${id}`);
+          setCollaborators(prev => prev.filter(c => c.id !== id));
+          toast.success("Collaborator removed.");
+        } catch (err) {
+          toast.error(err, "Failed to remove collaborator.");
+        } finally {
+          setRemovingId(null);
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
+
+  function handleLeavePoolPrompt() {
+    setModalConfig({
+      isOpen: true,
+      title: "Leave Pool",
+      message: `Are you sure you want to leave "${pool?.name}"? You will lose access to its splits and allocations.`,
+      confirmText: "Leave Pool",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.post(`/collaborators/leave/${poolId}`, {});
+          toast.success("You left the pool.");
+          window.location.href = "/dashboard/pools";
+        } catch (err) {
+          toast.error(err, "Failed to leave pool.");
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
+
+  function handleNullifyCodePrompt() {
+    if (!inviteCode) return;
+    setModalConfig({
+      isOpen: true,
+      title: "Nullify Invite Code",
+      message: `Are you sure you want to nullify/revoke code "${inviteCode.code.toUpperCase()}"? Anyone attempting to join using this code or link will be blocked.`,
+      confirmText: "Nullify Code",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/collaborators/${inviteCode.code}`);
+          toast.success("Invite code nullified.");
+          setInviteCode(null);
+          setShowCodeSection(false);
+          load();
+        } catch (err) {
+          toast.error(err, "Failed to nullify invite code.");
+        } finally {
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
   }
 
   async function handleGenerateCode() {
     setCodeInviteState("generating");
     setCodeInviteError("");
     try {
-      // Create a CODE-type invitation (no email = invite code)
       const result = await api.post<Collaborator & { code?: string }>("/collaborators", {
         projectId: poolId,
         role: "Collaborator",
@@ -195,7 +276,7 @@ export default function MembersPage({ params }: Props) {
 
   async function handleCopyLink() {
     if (!inviteCode) return;
-    const inviteLink = `${window.location.origin}/invitations/${inviteCode.code}`;
+    const inviteLink = `${window.location.origin}/join/${inviteCode.code}`;
     await navigator.clipboard.writeText(inviteLink);
     setLinkCopied(true);
     toast.success("Invite link copied to clipboard!");
@@ -235,43 +316,75 @@ export default function MembersPage({ params }: Props) {
         </div>
         {!showForm && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              onClick={() => setShowForm(true)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 7,
-                padding: "9px 18px", borderRadius: 100,
-                background: "#0A0A0A", color: "#fff", border: "none",
-                fontSize: 13, fontWeight: 500, cursor: "pointer",
-                transition: "background 140ms", flexShrink: 0,
-                fontFamily: "var(--font-sans)",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Invite by email
-            </button>
-            <button
-              onClick={() => setShowCodeSection(s => !s)}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 7,
-                padding: "9px 18px", borderRadius: 100,
-                background: "none", color: "#555", border: "1px solid rgba(0,0,0,0.12)",
-                fontSize: 13, fontWeight: 500, cursor: "pointer",
-                transition: "background 140ms, border-color 140ms", flexShrink: 0,
-                fontFamily: "var(--font-sans)",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-              </svg>
-              Invite code
-            </button>
+            {isOwner ? (
+              <>
+                <button
+                  onClick={() => setShowForm(true)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "9px 18px", borderRadius: 100,
+                    background: "#0A0A0A", color: "#fff", border: "none",
+                    fontSize: 13, fontWeight: 500, cursor: "pointer",
+                    transition: "background 140ms", flexShrink: 0,
+                    fontFamily: "var(--font-sans)",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  Invite by email
+                </button>
+                <button
+                  onClick={() => {
+                    if (!inviteCode) {
+                      handleGenerateCode();
+                    } else {
+                      setShowCodeSection(s => !s);
+                    }
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "9px 18px", borderRadius: 100,
+                    background: "none", color: "#555", border: "1px solid rgba(0,0,0,0.12)",
+                    fontSize: 13, fontWeight: 500, cursor: "pointer",
+                    transition: "background 140ms, border-color 140ms", flexShrink: 0,
+                    fontFamily: "var(--font-sans)",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Invite code
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleLeavePoolPrompt}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 7,
+                  padding: "9px 18px", borderRadius: 100,
+                  background: "rgba(220,38,38,0.08)", color: "#DC2626",
+                  border: "1px solid rgba(220,38,38,0.2)",
+                  fontSize: 13, fontWeight: 500, cursor: "pointer",
+                  transition: "background 140ms", flexShrink: 0,
+                  fontFamily: "var(--font-sans)",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.15)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.08)"; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Leave Pool
+              </button>
+            )}
           </div>
         )}
       </div>
