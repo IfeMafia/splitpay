@@ -2,19 +2,26 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { InvitationStatus, PoolRole } from '@prisma/client';
 
+function extractToken(rawToken: string): string {
+  let cleaned = rawToken.trim().replace(/\/+$/, '');
+  if (cleaned.includes('/')) {
+    const parts = cleaned.split('/').filter(Boolean);
+    cleaned = parts[parts.length - 1] || cleaned;
+  }
+  return cleaned;
+}
+
 /**
- * Public endpoint — fetch invitation details by token.
- * Token here is the unique invite token on PoolInvitation.
+ * Public endpoint — fetch invitation details by token or code.
  */
-export async function getInvitation(token: string) {
-  const normalizedToken = token.trim().toLowerCase();
+export async function getInvitation(rawToken: string) {
+  const token = extractToken(rawToken);
   const invitation = await prisma.poolInvitation.findFirst({
     where: {
       OR: [
-        { token: normalizedToken },
-        { code: normalizedToken },
-        { token },
-        { code: token },
+        { code: { equals: token, mode: 'insensitive' } },
+        { token: { equals: token, mode: 'insensitive' } },
+        { id: token },
       ],
     },
     include: {
@@ -37,7 +44,7 @@ export async function getInvitation(token: string) {
   }
 
   return {
-    id: invitation.token,
+    id: invitation.token || invitation.code,
     projectId: invitation.poolId,
     projectName: invitation.pool.name,
     invitedEmail: invitation.email,
@@ -52,15 +59,14 @@ export async function getInvitation(token: string) {
 /**
  * Authenticated endpoint — accept an invitation and join the pool.
  */
-export async function acceptInvitation(token: string, userId: string) {
-  const normalizedToken = token.trim().toLowerCase();
+export async function acceptInvitation(rawToken: string, userId: string) {
+  const token = extractToken(rawToken);
   const invitation = await prisma.poolInvitation.findFirst({
     where: {
       OR: [
-        { token: normalizedToken },
-        { code: normalizedToken },
-        { token },
-        { code: token },
+        { code: { equals: token, mode: 'insensitive' } },
+        { token: { equals: token, mode: 'insensitive' } },
+        { id: token },
       ],
     },
   });
@@ -76,8 +82,8 @@ export async function acceptInvitation(token: string, userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND');
 
-  // If this was an email-targeted invitation, enforce email match
-  if (invitation.email && user.email !== invitation.email) {
+  // If this was an email-targeted invitation, enforce case-insensitive email match
+  if (invitation.email && user.email.toLowerCase() !== invitation.email.toLowerCase()) {
     throw new AppError(403, 'You can only accept invitations sent to your email address', 'FORBIDDEN');
   }
 

@@ -3,9 +3,8 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getToken, isAuthenticated } from "../../lib/auth";
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050/api";
+import { isAuthenticated } from "../../lib/auth";
+import { api, ApiError } from "../../lib/api";
 
 interface Invitation {
   id: string;
@@ -38,18 +37,16 @@ export default function JoinPage({ params }: Props) {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`${BASE_URL}/invitations/${token}`);
-        if (res.status === 404) { setState("not_found"); return; }
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.message ?? `Error ${res.status}`);
-        }
-        const json = await res.json();
-        setInvitation(json.data);
+        const data = await api.get<Invitation>(`/invitations/${token}`);
+        setInvitation(data);
         setState("ready");
       } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : "Failed to load invitation.");
-        setState("error");
+        if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
+          setState("not_found");
+        } else {
+          setErrorMsg(err instanceof Error ? err.message : "Failed to load invitation.");
+          setState("error");
+        }
       }
     }
     load();
@@ -63,16 +60,7 @@ export default function JoinPage({ params }: Props) {
     
     setState("accepting");
     try {
-      const res = await fetch(`${BASE_URL}/invitations/${token}/accept`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${getToken()}`
-        }
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.message ?? `Error ${res.status}`);
-      }
+      await api.post(`/invitations/${token}/accept`, {});
       setState("success");
       setTimeout(() => {
         router.push("/dashboard/pools");
