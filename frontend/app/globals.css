@@ -36,9 +36,13 @@
   --border-dark: rgba(255,255,255,0.09);
 
   /* Typography */
-  --font-sans:  var(--font-outfit), 'Outfit', system-ui, -apple-system, sans-serif;
-  --font-serif: var(--font-playfair), Georgia, 'Times New Roman', serif;
-  --font-mono:  var(--font-geist-mono), 'Courier New', monospace;
+  --font-outfit:    'Outfit', system-ui, -apple-system, sans-serif;
+  --font-playfair:  'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-geist-mono:'Geist Mono', 'Courier New', monospace;
+
+  --font-sans:  var(--font-outfit);
+  --font-serif: var(--font-playfair);
+  --font-mono:  var(--font-geist-mono);
 
   /* Shadows */
   --shadow-xs: 0 1px 3px rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.04);

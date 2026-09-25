@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setToken, setUser, isAuthenticated } from "../../lib/auth";
+import GoogleAuthButton from "@/app/components/GoogleAuthButton";
+import { toast } from "@/app/components/Toast";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -29,7 +31,6 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     if (isAuthenticated()) {
@@ -41,7 +42,6 @@ function LoginForm() {
     e.preventDefault();
     if (!email.trim() || !password) return;
     setLoading(true);
-    setError("");
 
     try {
       const res = await fetch(`${BASE_URL}/auth/login`, {
@@ -58,9 +58,10 @@ function LoginForm() {
       if (userData) {
         setUser(userData);
       }
+      toast.success("Signed in successfully!");
       router.replace(redirectUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed. Please try again.");
+      toast.error(err, "Sign in failed. Please check your credentials and try again.");
     } finally {
       setLoading(false);
     }
@@ -86,19 +87,25 @@ function LoginForm() {
         </p>
       </div>
 
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          display: "flex", alignItems: "flex-start", gap: 9,
-          padding: "12px 14px", borderRadius: 10, marginBottom: 20,
-          background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.18)",
-        }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <p style={{ fontSize: 13, color: "#991B1B", lineHeight: 1.5 }}>{error}</p>
-        </div>
-      )}
+      {/* Social Login */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+        <GoogleAuthButton
+          text="continue_with"
+          onSuccess={() => {
+            toast.success("Signed in with Google!");
+            router.replace(redirectUrl);
+          }}
+          onError={() => {
+            // Handled via toast inside GoogleAuthButton
+          }}
+        />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+        <span style={{ fontSize: 12, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>Or email</span>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+      </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
@@ -236,4 +243,3 @@ function Spinner() {
     </svg>
   );
 }
-

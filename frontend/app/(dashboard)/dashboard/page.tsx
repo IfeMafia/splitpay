@@ -14,9 +14,14 @@ function DashboardContent() {
   const forceDemo = params.get("demo") === "1";
   const forceLoading = params.get("loading") === "1";
 
-  const [loading, setLoading] = useState(true);
-  const [pools, setPools] = useState<PoolResponse[]>([]);
-  const [notifications, setNotifications] = useState<NotificationResponse[]>([]);
+  // Check synchronous cache for instant zero-delay rendering
+  const cachedPools = api.getCached<PoolResponse[]>("/pools");
+  const cachedNotes = api.getCached<NotificationResponse[]>("/notifications");
+  const hasCachedData = Boolean((cachedPools && cachedPools.length > 0) || (cachedNotes && cachedNotes.length > 0));
+
+  const [loading, setLoading] = useState(!hasCachedData && !forceDemo);
+  const [pools, setPools] = useState<PoolResponse[]>(cachedPools ?? []);
+  const [notifications, setNotifications] = useState<NotificationResponse[]>(cachedNotes ?? []);
   const [userName, setUserName] = useState<string>("User");
 
   useEffect(() => {

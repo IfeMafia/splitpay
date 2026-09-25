@@ -23,6 +23,16 @@ const statements = [
     CONSTRAINT "users_pkey" PRIMARY KEY ("id")
   )`,
 
+  `CREATE TABLE IF NOT EXISTS "password_reset_tokens" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "password_reset_tokens_pkey" PRIMARY KEY ("id")
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "password_reset_tokens_token_key" ON "password_reset_tokens"("token")`,
+
   `CREATE TABLE IF NOT EXISTS "pools" (
     "id" TEXT NOT NULL,
     "owner_id" TEXT NOT NULL,

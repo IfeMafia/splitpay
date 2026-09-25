@@ -17,3 +17,21 @@ export const loginSchema = z.object({
 
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
+
+export const googleAuthSchema = z.object({
+  credential: z.string().min(1, 'Google credential token is required'),
+  invitationToken: z.string().optional(),
+});
+export type GoogleAuthDto = z.infer<typeof googleAuthSchema>;
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email address'),
+});
+export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>;
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Reset token is required'),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+});
+export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>;
+

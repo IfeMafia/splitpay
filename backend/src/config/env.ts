@@ -15,6 +15,8 @@ const envSchema = z.object({
   SMTP_FROM: z.string().optional().default('no-reply@splitpay.local'),
   PAYSTACK_SECRET_KEY: z.string().optional().default('sk_test_placeholder'),
   PAYSTACK_PUBLIC_KEY: z.string().optional().default('pk_test_placeholder'),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
 });
 
 

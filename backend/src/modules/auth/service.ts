@@ -1,11 +1,56 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
-import { RegisterDto, LoginDto } from './validators';
+import { RegisterDto, LoginDto, GoogleAuthDto, ForgotPasswordDto, ResetPasswordDto } from './validators';
 import { AuthResponse, UserProfile } from '../../contracts';
 import { InvitationStatus, PoolRole } from '@prisma/client';
+
+interface GoogleTokenPayload {
+  iss: string;
+  sub: string;
+  azp?: string;
+  aud: string;
+  email: string;
+  email_verified: string | boolean;
+  name?: string;
+  picture?: string;
+}
+
+export async function verifyGoogleToken(credential: string): Promise<GoogleTokenPayload> {
+  const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
+  let response: Response;
+
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    throw new AppError(503, 'Failed to connect to Google authentication service', 'GOOGLE_SERVICE_UNAVAILABLE');
+  }
+
+  if (!response.ok) {
+    throw new AppError(401, 'Invalid or expired Google credential', 'INVALID_GOOGLE_TOKEN');
+  }
+
+  const payload = (await response.json()) as GoogleTokenPayload;
+
+  const isVerified = payload.email_verified === 'true' || payload.email_verified === true;
+  if (!isVerified || !payload.email) {
+    throw new AppError(401, 'Google email address is not verified', 'UNVERIFIED_GOOGLE_EMAIL');
+  }
+
+  if (
+    env.GOOGLE_CLIENT_ID &&
+    env.GOOGLE_CLIENT_ID !== 'your-google-client-id.apps.googleusercontent.com' &&
+    payload.aud !== env.GOOGLE_CLIENT_ID &&
+    payload.azp !== env.GOOGLE_CLIENT_ID
+  ) {
+    throw new AppError(401, 'Google Client ID verification failed', 'UNAUTHORIZED_GOOGLE_CLIENT');
+  }
+
+  return payload;
+}
 
 export function formatUserProfile(user: {
   id: string;
@@ -137,3 +182,158 @@ export async function getCurrentUser(userId: string): Promise<UserProfile> {
 
   return formatUserProfile(user);
 }
+
+export async function googleAuth(dto: GoogleAuthDto): Promise<AuthResponse> {
+  const googleUser = await verifyGoogleToken(dto.credential);
+  const normalizedEmail = googleUser.email.toLowerCase();
+
+  let user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
+
+  if (!user) {
+    user = await prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email: normalizedEmail,
+          fullName: googleUser.name || normalizedEmail.split('@')[0],
+          defaultCurrency: 'NGN',
+          country: 'NG',
+        },
+      });
+
+      if (dto.invitationToken) {
+        const invitation = await tx.poolInvitation.findUnique({
+          where: { token: dto.invitationToken },
+        });
+
+        if (invitation && invitation.status === InvitationStatus.PENDING && invitation.expiresAt > new Date()) {
+          await tx.poolMember.create({
+            data: {
+              poolId: invitation.poolId,
+              userId: newUser.id,
+              role: PoolRole.MEMBER,
+            },
+          });
+
+          await tx.poolInvitation.update({
+            where: { id: invitation.id },
+            data: { status: InvitationStatus.ACCEPTED },
+          });
+
+          await tx.notification.create({
+            data: {
+              userId: newUser.id,
+              title: 'Welcome to Splitpay Pool!',
+              message: 'You have joined a pool via your invitation link.',
+              type: 'POOL_JOINED',
+              data: { poolId: invitation.poolId },
+            },
+          });
+        }
+      }
+
+      return newUser;
+    });
+  } else if (dto.invitationToken) {
+    const invitation = await prisma.poolInvitation.findUnique({
+      where: { token: dto.invitationToken },
+    });
+
+    if (invitation && invitation.status === InvitationStatus.PENDING && invitation.expiresAt > new Date()) {
+      const existingMember = await prisma.poolMember.findUnique({
+        where: {
+          poolId_userId: {
+            poolId: invitation.poolId,
+            userId: user.id,
+          },
+        },
+      });
+
+      if (!existingMember) {
+        await prisma.poolMember.create({
+          data: {
+            poolId: invitation.poolId,
+            userId: user.id,
+            role: PoolRole.MEMBER,
+          },
+        });
+
+        await prisma.poolInvitation.update({
+          where: { id: invitation.id },
+          data: { status: InvitationStatus.ACCEPTED },
+        });
+      }
+    }
+  }
+
+  const token = generateToken({ id: user.id, email: user.email });
+
+  return {
+    user: formatUserProfile(user),
+    token,
+  };
+}
+
+export async function forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string; token?: string }> {
+  const email = dto.email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (!user) {
+    // Return friendly success message to prevent account enumeration
+    return { message: "If an account with that email exists, password reset instructions have been generated." };
+  }
+
+  const db = prisma as any;
+
+  // Delete any existing reset tokens for this email
+  await db.passwordResetToken.deleteMany({
+    where: { email },
+  });
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiration
+
+  await db.passwordResetToken.create({
+    data: {
+      email,
+      token: resetToken,
+      expiresAt,
+    },
+  });
+
+  return {
+    message: "Password reset link generated successfully.",
+    token: resetToken,
+  };
+}
+
+export async function resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+  const db = prisma as any;
+  const resetTokenRecord = await db.passwordResetToken.findUnique({
+    where: { token: dto.token },
+  });
+
+  if (!resetTokenRecord || resetTokenRecord.expiresAt < new Date()) {
+    throw new AppError(400, "Invalid or expired password reset link", "INVALID_RESET_TOKEN");
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const passwordHash = await bcrypt.hash(dto.newPassword, salt);
+
+  await prisma.user.update({
+    where: { email: resetTokenRecord.email },
+    data: { passwordHash },
+  });
+
+  // Delete used token
+  await db.passwordResetToken.delete({
+    where: { id: resetTokenRecord.id },
+  });
+
+  return { message: "Password reset successfully. You can now log in with your new password." };
+}
+
+

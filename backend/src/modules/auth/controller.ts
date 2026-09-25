@@ -47,3 +47,40 @@ export async function getMe(req: AuthenticatedRequest, res: Response, next: Next
     next(err);
   }
 }
+
+export async function googleAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await authService.googleAuth(req.body);
+    res.status(200).json({
+      data: result,
+      message: 'Authenticated with Google successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function forgotPassword(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await authService.forgotPassword(req.body);
+    res.status(200).json({
+      data: result,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetPassword(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await authService.resetPassword(req.body);
+    res.status(200).json({
+      data: result,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+

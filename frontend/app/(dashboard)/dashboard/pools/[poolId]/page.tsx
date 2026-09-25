@@ -51,10 +51,14 @@ type LoadState = "loading" | "ready" | "error";
 export default function PoolWorkspacePage({ params }: Props) {
   const { poolId } = use(params);
 
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [pool, setPool] = useState<Pool | null>(null);
-  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const cachedPool = api.getCached<Pool>(`/projects/${poolId}`);
+  const cachedCollabs = api.getCached<Collaborator[]>(`/collaborators/project/${poolId}`);
+  const cachedPayments = api.getCached<Payment[]>(`/payments/project/${poolId}`);
+
+  const [loadState, setLoadState] = useState<LoadState>(cachedPool ? "ready" : "loading");
+  const [pool, setPool] = useState<Pool | null>(cachedPool ?? null);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>(cachedCollabs ?? []);
+  const [payments, setPayments] = useState<Payment[]>(cachedPayments ?? []);
   const [errorMsg, setErrorMsg] = useState("");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
 

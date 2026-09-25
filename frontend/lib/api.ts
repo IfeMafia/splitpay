@@ -99,6 +99,15 @@ class ApiClient {
     return res;
   }
 
+  async googleAuth(credential: string, invitationToken?: string): Promise<AuthResponse> {
+    const res = await this.request<AuthResponse>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential, invitationToken }),
+    });
+    this.setToken(res.token);
+    return res;
+  }
+
   async logout(): Promise<void> {
     try {
       await this.request('/auth/logout', { method: 'POST' });
