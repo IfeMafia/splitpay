@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { InvitationStatus, InvitationType, PoolRole } from '@prisma/client';
-import { generateShortToken } from '../../utils/token';
+import { generateShortToken, generateDigitCode } from '../../utils/token';
 
 export interface CreateInvitationDto {
   projectId?: string;
@@ -142,7 +142,17 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
     }
   }
 
-  const token = generateShortToken();
+  // Generate a 3-digit numeric invite code
+  let inviteCode = generateDigitCode(3);
+  let existingToken = await prisma.poolInvitation.findUnique({ where: { token: inviteCode } });
+  let attempts = 0;
+  while (existingToken && attempts < 15) {
+    inviteCode = generateDigitCode(3);
+    existingToken = await prisma.poolInvitation.findUnique({ where: { token: inviteCode } });
+    attempts++;
+  }
+  const token = existingToken ? `${inviteCode}-${crypto.randomBytes(2).toString('hex')}` : inviteCode;
+
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
   const invitation = await prisma.poolInvitation.create({
@@ -151,7 +161,7 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
       inviterId,
       type: normalizedEmail ? InvitationType.EMAIL : InvitationType.CODE,
       email: normalizedEmail || null,
-      code: token,
+      code: inviteCode,
       token,
       status: InvitationStatus.PENDING,
       expiresAt,
@@ -169,12 +179,13 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
       entityId: invitation.id,
       action: 'INVITATION_CREATED',
       actorId: inviterId,
-      metadata: { poolId, email: normalizedEmail, token, splitPercentage: dto.splitPercentage },
+      metadata: { poolId, email: normalizedEmail, token, code: inviteCode, splitPercentage: dto.splitPercentage },
     },
   });
 
   return {
     id: invitation.token,
+    code: invitation.code || inviteCode,
     projectId: invitation.poolId,
     userId: null,
     invitedEmail: invitation.email,
