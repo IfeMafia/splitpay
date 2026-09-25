@@ -236,6 +236,7 @@ const statements = [
   `CREATE INDEX IF NOT EXISTS "ledger_entries_account_id_idx" ON "ledger_entries"("account_id")`,
   `CREATE INDEX IF NOT EXISTS "notifications_user_id_idx" ON "notifications"("user_id")`,
   `CREATE INDEX IF NOT EXISTS "audit_log_entity_type_entity_id_idx" ON "audit_log"("entity_type", "entity_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "audit_log_webhook_entity_idempotency_key" ON "audit_log"("entity_type", "entity_id") WHERE "entity_type" = 'WEBHOOK'`,
 
   // Foreign keys
   `ALTER TABLE "pools" ADD CONSTRAINT "pools_owner_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE`,
