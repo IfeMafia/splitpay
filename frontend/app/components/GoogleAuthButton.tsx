@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api } from "@/app/lib/api";
+import { setToken, setUser } from "@/app/lib/auth";
 import { toast } from "@/app/components/Toast";
 
 declare global {
@@ -75,7 +76,13 @@ export default function GoogleAuthButton({
               if (!response?.credential) return;
               try {
                 setLoading(true);
-                await api.googleAuth(response.credential, invitationToken);
+                const res = await api.googleAuth(response.credential, invitationToken);
+                if (res?.token) {
+                  setToken(res.token);
+                }
+                if (res?.user) {
+                  setUser(res.user);
+                }
                 onSuccess?.();
               } catch (err: unknown) {
                 toast.error(err, "Google sign-in failed. Please try again.");
