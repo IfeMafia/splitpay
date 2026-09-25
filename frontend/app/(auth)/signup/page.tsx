@@ -5,6 +5,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setToken, setUser, isAuthenticated } from "../../lib/auth";
 import GoogleAuthButton from "@/app/components/GoogleAuthButton";
+import { toast } from "@/app/components/Toast";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -38,7 +39,6 @@ function SignupForm() {
   const invitationToken = searchParams.get("invite") || searchParams.get("invitationToken") || (invitationTokenMatch ? invitationTokenMatch[1] : undefined);
 
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -83,7 +83,6 @@ function SignupForm() {
     if (Object.keys(errs).length) return;
 
     setLoading(true);
-    setError("");
 
     try {
       const payload: Record<string, string> = {
@@ -114,6 +113,7 @@ function SignupForm() {
         if (regData.user) {
           setUser(regData.user);
         }
+        toast.success("Account created successfully!");
         router.replace(redirectTo);
         return;
       }
@@ -134,9 +134,10 @@ function SignupForm() {
       if (loggedUser) {
         setUser(loggedUser);
       }
+      toast.success("Account created successfully!");
       router.replace(redirectTo);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+      toast.error(err, "Registration failed. Please check your information and try again.");
     } finally {
       setLoading(false);
     }
@@ -162,27 +163,18 @@ function SignupForm() {
         </p>
       </div>
 
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          display: "flex", alignItems: "flex-start", gap: 9,
-          padding: "12px 14px", borderRadius: 10, marginBottom: 20,
-          background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.18)",
-        }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <p style={{ fontSize: 13, color: "#991B1B", lineHeight: 1.5 }}>{error}</p>
-        </div>
-      )}
-
       {/* Social Signup */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
         <GoogleAuthButton
           text="signup_with"
           invitationToken={invitationToken}
-          onSuccess={() => router.replace(redirectTo)}
-          onError={(err: string) => setError(err)}
+          onSuccess={() => {
+            toast.success("Signed in with Google!");
+            router.replace(redirectTo);
+          }}
+          onError={() => {
+            // Handled via toast inside GoogleAuthButton
+          }}
         />
       </div>
 
