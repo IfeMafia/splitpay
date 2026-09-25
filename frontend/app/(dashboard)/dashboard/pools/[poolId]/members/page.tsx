@@ -435,34 +435,49 @@ export default function MembersPage({ params }: Props) {
                   border: "1px solid rgba(0,0,0,0.15)", background: "#F4F4F5",
                 }}>
                   <span style={{
-                    fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)", color: "#0A0A0A",
-                    letterSpacing: "0.08em",
+                    fontSize: 20, fontWeight: 700, fontFamily: "var(--font-mono)", color: "#0A0A0A",
+                    letterSpacing: "0.12em", textTransform: "uppercase",
                   }}>
                     {inviteCode.code}
                   </span>
-                  <button
-                    onClick={handleCopyOnlyCode}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "8px 14px", borderRadius: 8, flexShrink: 0,
-                      background: codeCopied ? "rgba(22,163,74,0.1)" : "#0A0A0A",
-                      color: codeCopied ? "#16A34A" : "#fff",
-                      border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer",
-                      transition: "all 180ms", fontFamily: "inherit",
-                    }}
-                  >
-                    {codeCopied ? (
-                      <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> Code Copied</>
-                    ) : (
-                      <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Code</>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={handleCopyOnlyCode}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "8px 14px", borderRadius: 8, flexShrink: 0,
+                        background: codeCopied ? "rgba(22,163,74,0.1)" : "#0A0A0A",
+                        color: codeCopied ? "#16A34A" : "#fff",
+                        border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer",
+                        transition: "all 180ms", fontFamily: "inherit",
+                      }}
+                    >
+                      {codeCopied ? (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> Code Copied</>
+                      ) : (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Code</>
+                      )}
+                    </button>
+                    {isOwner && (
+                      <button
+                        onClick={handleNullifyCodePrompt}
+                        style={{
+                          padding: "8px 12px", borderRadius: 8,
+                          border: "1px solid rgba(220,38,38,0.2)", background: "rgba(220,38,38,0.06)",
+                          color: "#DC2626", fontSize: 12, fontWeight: 500, cursor: "pointer",
+                          fontFamily: "inherit", transition: "background 140ms",
+                        }}
+                      >
+                        Nullify Code
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </div>
               </div>
 
               {/* Full Link Reference */}
               <div>
-                <p style={{ fontSize: 11.5, fontWeight: 500, color: "#888", marginBottom: 6 }}>Full Link</p>
+                <p style={{ fontSize: 11.5, fontWeight: 500, color: "#888", marginBottom: 6 }}>Join Link</p>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "8px 12px", borderRadius: 8,
@@ -472,7 +487,7 @@ export default function MembersPage({ params }: Props) {
                     flex: 1, fontSize: 12, fontFamily: "var(--font-mono)", color: "#666",
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
-                    {typeof window !== "undefined" ? `${window.location.origin}/invitations/${inviteCode.code}` : `/invitations/${inviteCode.code}`}
+                    {typeof window !== "undefined" ? `${window.location.origin}/join/${inviteCode.code}` : `/join/${inviteCode.code}`}
                   </span>
                   <button
                     onClick={handleCopyLink}
@@ -480,18 +495,17 @@ export default function MembersPage({ params }: Props) {
                       display: "inline-flex", alignItems: "center", gap: 4,
                       padding: "5px 10px", borderRadius: 6, flexShrink: 0,
                       background: linkCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
-                      color: linkCopied ? "#16A34A" : "#333",
+                      color: linkCopied ? "#16A34A" : "#555",
                       border: "none", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
-                      transition: "all 180ms", fontFamily: "inherit",
+                      fontFamily: "inherit",
                     }}
                   >
                     {linkCopied ? "Link Copied" : "Copy Link"}
                   </button>
                 </div>
               </div>
-
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                <p style={{ fontSize: 11.5, color: "#999", margin: 0 }}>Code & link expire in 7 days.</p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+              <p style={{ fontSize: 11.5, color: "#999", margin: 0 }}>Code & link expire in 7 days.</p>
                 <button
                   onClick={handleGenerateCode}
                   disabled={codeInviteState === "generating"}
@@ -797,25 +811,27 @@ export default function MembersPage({ params }: Props) {
                       {formatPercent(c.splitPercentage)}
                     </span>
                     <StatusBadge status={c.status} />
-                    <button
-                      onClick={() => handleRemove(c.id)}
-                      disabled={isRemoving}
-                      title="Remove collaborator"
-                      style={{
-                        background: "none", border: "none", padding: 4,
-                        cursor: isRemoving ? "not-allowed" : "pointer",
-                        color: "#ccc", transition: "color 120ms",
-                      }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#DC2626"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#ccc"; }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14H6L5 6" />
-                        <path d="M10 11v6M14 11v6" />
-                        <path d="M9 6V4h6v2" />
-                      </svg>
-                    </button>
+                    {isOwner && (
+                      <button
+                        onClick={() => handleRemovePrompt(c.id, identifier)}
+                        disabled={isRemoving}
+                        title="Remove collaborator"
+                        style={{
+                          background: "none", border: "none", padding: 4,
+                          cursor: isRemoving ? "not-allowed" : "pointer",
+                          color: "#ccc", transition: "color 120ms",
+                        }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#DC2626"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#ccc"; }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14H6L5 6" />
+                          <path d="M10 11v6M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </div>
               );

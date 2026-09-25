@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -25,32 +26,46 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  const [visible, setVisible] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        onCancel();
+      }
+    };
     if (isOpen) {
-      setVisible(true);
-    } else {
-      const timer = setTimeout(() => setVisible(false), 200);
-      return () => clearTimeout(timer);
+      document.body.style.overflow = "hidden";
+      window.addEventListener("keydown", handleKeyDown);
     }
-  }, [isOpen]);
+    return () => {
+      document.body.style.overflow = "unset";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onCancel]);
 
-  if (!visible && !isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
-  return (
+  const modalContent = (
     <div
       style={{
         position: "fixed",
-        inset: 0,
-        zIndex: 9999,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 999999,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: 20,
-        background: isOpen ? "rgba(0, 0, 0, 0.45)" : "rgba(0, 0, 0, 0)",
-        backdropFilter: isOpen ? "blur(6px)" : "blur(0px)",
-        transition: "background 200ms ease, backdrop-filter 200ms ease",
+        background: "rgba(0, 0, 0, 0.55)",
+        backdropFilter: "blur(5px)",
+        WebkitBackdropFilter: "blur(5px)",
       }}
       onClick={onCancel}
     >
@@ -61,11 +76,9 @@ export default function ConfirmModal({
           maxWidth: 420,
           background: "#FFFFFF",
           borderRadius: 20,
-          padding: 24,
-          boxShadow: "0 20px 40px -10px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05)",
-          transform: isOpen ? "scale(1) translateY(0)" : "scale(0.95) translateY(8px)",
-          opacity: isOpen ? 1 : 0,
-          transition: "transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease",
+          padding: "26px 24px",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.08)",
+          transform: "scale(1)",
         }}
       >
         <div style={{ marginBottom: 16 }}>
@@ -92,6 +105,7 @@ export default function ConfirmModal({
               border: "1px solid rgba(0,0,0,0.05)",
               cursor: "pointer",
               transition: "background 140ms",
+              fontFamily: "inherit",
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "#EAEAEA")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "#F5F5F7")}
@@ -116,6 +130,7 @@ export default function ConfirmModal({
                 ? "0 4px 12px rgba(220, 38, 38, 0.25)"
                 : "0 4px 12px rgba(10, 10, 10, 0.2)",
               transition: "transform 140ms, background 140ms",
+              fontFamily: "inherit",
             }}
             onMouseEnter={(e) => {
               if (!loading) (e.currentTarget.style.transform = "translateY(-1px)");
@@ -130,4 +145,6 @@ export default function ConfirmModal({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }
