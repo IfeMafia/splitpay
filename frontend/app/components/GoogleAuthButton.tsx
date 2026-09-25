@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { toast } from "@/app/components/Toast";
 
 declare global {
   interface Window {
@@ -77,8 +78,8 @@ export default function GoogleAuthButton({
                 await api.googleAuth(response.credential, invitationToken);
                 onSuccess?.();
               } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : "Google authentication failed";
-                onError?.(message);
+                toast.error(err, "Google sign-in failed. Please try again.");
+                onError?.("Google sign-in failed.");
               } finally {
                 setLoading(false);
               }
@@ -121,9 +122,10 @@ export default function GoogleAuthButton({
 
   const handleFallbackClick = () => {
     if (configMissing || !isConfigured) {
-      onError?.(
-        "Google OAuth is not configured yet. Please set NEXT_PUBLIC_GOOGLE_CLIENT_ID in your frontend .env.local file."
+      toast.error(
+        "Google sign-in is currently unavailable. Please try signing in with your email and password."
       );
+      onError?.("Google sign-in unavailable");
       return;
     }
 
