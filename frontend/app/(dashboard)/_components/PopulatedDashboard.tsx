@@ -3,7 +3,7 @@
 import Link from "next/link";
 import StatusBadge from "../../components/ui/StatusBadge";
 import { formatAmount, formatRelativeTime, formatPercent } from "../../lib/format";
-import { PoolResponse, NotificationResponse } from "../../lib/contracts";
+import { PoolResponse, NotificationResponse } from "@/lib/contracts";
 
 const DEMO_POOLS = [
   { id: "p1", name: "Brand Film — Pepsi Q4", status: "ACTIVE", currency: "NGN", totalAmount: 1800000, memberCount: 4, createdAt: new Date(Date.now() - 86400000 * 3) },
