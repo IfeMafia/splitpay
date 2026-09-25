@@ -117,10 +117,10 @@ export default function SplitPage({ params }: Props) {
       } else {
         setSplitType("EQUAL");
         // default equal
-        if (confirmedCollabs.length > 0) {
-          const equal = Math.round((100 / confirmedCollabs.length) * 100) / 100;
+        if (activeCollabs.length > 0) {
+          const equal = Math.round((100 / activeCollabs.length) * 100) / 100;
           const shares: Record<string, number> = {};
-          confirmedCollabs.forEach(c => shares[c.id] = equal);
+          activeCollabs.forEach((c: { id: string }) => { shares[c.id] = equal; });
           setCustomShares(shares);
         }
       }
