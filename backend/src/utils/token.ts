@@ -19,3 +19,16 @@ export function generateShortToken(chunkLength: number = 3, numChunks: number = 
 
   return chunks.join('-');
 }
+
+/**
+ * Generates a short numeric code consisting of digits only.
+ * Default: 3 digits (e.g. "482", "719")
+ */
+export function generateDigitCode(length: number = 3): string {
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += crypto.randomInt(0, 10).toString();
+  }
+  return code;
+}
+
