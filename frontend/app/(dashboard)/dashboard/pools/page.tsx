@@ -20,8 +20,9 @@ interface Pool {
 type LoadState = "loading" | "ready" | "error";
 
 export default function PoolsPage() {
-  const [pools, setPools] = useState<Pool[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const cachedProjects = api.getCached<Pool[]>("/projects") || api.getCached<Pool[]>("/pools");
+  const [pools, setPools] = useState<Pool[]>(cachedProjects ?? []);
+  const [loadState, setLoadState] = useState<LoadState>(cachedProjects ? "ready" : "loading");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -65,8 +66,10 @@ export default function PoolsPage() {
         if (err.name === "ApiError") {
           setErrorStatus(err.status);
         }
-        setErrorMsg(err instanceof Error ? err.message : "Failed to load Pools.");
-        setLoadState("error");
+        if (!cachedProjects) {
+          setErrorMsg(err instanceof Error ? err.message : "Failed to load Pools.");
+          setLoadState("error");
+        }
       });
   }, []);
 
