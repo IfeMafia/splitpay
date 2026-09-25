@@ -409,7 +409,7 @@ export default function PoolWorkspacePage({ params }: Props) {
               </DetailRow>
               <DetailRow label="Expected">
                 <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "#555" }}>
-                  {formatAmount(pool.totalAmount, pool.currency)}
+                  {formatAmount((pool as any).totalAmount ?? 0, pool.currency)}
                 </span>
               </DetailRow>
               <DetailRow label="Members">
