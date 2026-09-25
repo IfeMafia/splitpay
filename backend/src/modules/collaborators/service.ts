@@ -186,7 +186,31 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
 /**
  * List all collaborators (pending invitations + confirmed members) for a pool.
  */
-export async function getProjectCollaborators(poolId: string) {
+export async function getProjectCollaborators(poolId: string, actorId: string) {
+  const [pool, membership] = await Promise.all([
+    prisma.pool.findUnique({
+      where: { id: poolId },
+      select: { ownerId: true },
+    }),
+    prisma.poolMember.findUnique({
+      where: {
+        poolId_userId: {
+          poolId,
+          userId: actorId,
+        },
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  if (!pool) {
+    throw new AppError(404, 'Pool not found', 'NOT_FOUND');
+  }
+
+  if (pool.ownerId !== actorId && !membership) {
+    throw new AppError(403, 'You do not have access to this Pool collaborators', 'FORBIDDEN');
+  }
+
   const [invitations, members, splitConfig] = await Promise.all([
     prisma.poolInvitation.findMany({
       where: { poolId, status: { in: [InvitationStatus.PENDING, InvitationStatus.ACCEPTED] } },

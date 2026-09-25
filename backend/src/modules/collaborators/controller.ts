@@ -22,7 +22,7 @@ export async function createCollaborator(req: AuthenticatedRequest, res: Respons
 export async function getProjectCollaborators(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { projectId } = req.params;
-    const result = await collaboratorService.getProjectCollaborators(projectId as string);
+    const result = await collaboratorService.getProjectCollaborators(projectId as string, req.user!.id);
     res.status(200).json({ data: result });
   } catch (err) {
     next(err);

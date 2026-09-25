@@ -3,6 +3,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { verifyPaystackTransaction } from '../../lib/paystack';
 import { PaymentStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { SplitType } from '@prisma/client';
 
 export interface FinancialChainBreakdown {
   grossAmount: number;
@@ -146,13 +147,43 @@ export async function confirmPaymentTransaction(
 
   // 4. Build pool members for allocation
   const members = transaction.pool.members;
+  const splitConfig = await prisma.splitConfiguration.findFirst({
+    where: { poolId: transaction.poolId },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const configuredType = splitConfig?.type ?? SplitType.EQUAL;
   const equalSplit = members.length > 0 ? 100 / members.length : 0;
-  const collaboratorsForCalc = members.map(m => ({
+  let snapshotType = SplitType.EQUAL;
+  let collaboratorsForCalc = members.map(m => ({
     id: m.id,
     userId: m.userId,
     role: m.role,
     splitPercentage: equalSplit,
   }));
+
+  if (configuredType === SplitType.CUSTOM && splitConfig && Array.isArray(splitConfig.configuration) && members.length > 0) {
+    const shareMap = new Map<string, number>();
+    for (const item of splitConfig.configuration as any[]) {
+      if (!item || !item.memberId || item.percentage === undefined) continue;
+      shareMap.set(String(item.memberId), Number(item.percentage));
+    }
+
+    const customCollaborators = members.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      role: m.role,
+      splitPercentage: shareMap.get(m.id) ?? shareMap.get(m.userId) ?? NaN,
+    }));
+
+    const hasAllPercentages = customCollaborators.every((m) => Number.isFinite(m.splitPercentage));
+    const totalPercentage = customCollaborators.reduce((sum, m) => sum + Number(m.splitPercentage), 0);
+
+    if (hasAllPercentages && Math.abs(totalPercentage - 100) <= 0.01) {
+      snapshotType = SplitType.CUSTOM;
+      collaboratorsForCalc = customCollaborators;
+    }
+  }
 
   const breakdown = calculateFinancialChain(
     paystackData.amountInNaira,
@@ -179,7 +210,7 @@ export async function confirmPaymentTransaction(
       data: {
         poolId: transaction.poolId,
         transactionId: transaction.id,
-        type: 'EQUAL',
+        type: snapshotType,
         snapshotData: collaboratorsForCalc as any,
         totalAmount: breakdown.grossAmount,
         distributableAmount: breakdown.distributableAmount,

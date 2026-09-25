@@ -86,6 +86,43 @@ export async function acceptInvitation(token: string, userId: string) {
       },
     });
 
+    const splitConfig = await tx.splitConfiguration.findFirst({
+      where: { poolId: invitation.poolId },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (splitConfig && Array.isArray(splitConfig.configuration)) {
+      let replaced = false;
+      const remapped = (splitConfig.configuration as any[]).map((entry) => {
+        if (!entry || typeof entry !== 'object') return entry;
+        if (entry.memberId === invitation.token || entry.memberId === invitation.id) {
+          replaced = true;
+          return { ...entry, memberId: newMember.id };
+        }
+        return entry;
+      });
+
+      if (replaced) {
+        const aggregated = new Map<string, number>();
+        for (const entry of remapped) {
+          if (!entry || typeof entry !== 'object' || !entry.memberId || entry.percentage === undefined) continue;
+          const memberId = String(entry.memberId);
+          const percentage = Number(entry.percentage);
+          aggregated.set(memberId, (aggregated.get(memberId) ?? 0) + percentage);
+        }
+
+        await tx.splitConfiguration.update({
+          where: { id: splitConfig.id },
+          data: {
+            configuration: Array.from(aggregated.entries()).map(([memberId, percentage]) => ({
+              memberId,
+              percentage: Math.round(percentage * 100) / 100,
+            })),
+          },
+        });
+      }
+    }
+
     await tx.notification.create({
       data: {
         userId,
