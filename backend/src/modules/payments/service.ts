@@ -4,6 +4,7 @@ import { initializePaystackTransaction } from '../../lib/paystack';
 import { PaymentLinkResponse, CreatePaymentLinkDto, InitializePaymentDto } from './types';
 import { PaymentStatus } from '@prisma/client';
 import crypto from 'crypto';
+import { generateShortToken } from '../../utils/token';
 
 /**
  * Maps a PaymentLink (+ optional latest Transaction) to the unified response shape
@@ -73,7 +74,7 @@ export async function createPaymentLink(dto: {
   const pool = await prisma.pool.findUnique({ where: { id: dto.projectId } });
   if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
 
-  const token = crypto.randomBytes(16).toString('hex');
+  const token = generateShortToken();
 
   const link = await prisma.paymentLink.create({
     data: {
