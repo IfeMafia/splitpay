@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { InvitationStatus, InvitationType, PoolRole } from '@prisma/client';
+import { generateShortToken } from '../../utils/token';
 
 export interface CreateInvitationDto {
   projectId?: string;
@@ -141,7 +142,7 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
     }
   }
 
-  const token = crypto.randomUUID();
+  const token = generateShortToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
   const invitation = await prisma.poolInvitation.create({
@@ -150,6 +151,7 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
       inviterId,
       type: normalizedEmail ? InvitationType.EMAIL : InvitationType.CODE,
       email: normalizedEmail || null,
+      code: token,
       token,
       status: InvitationStatus.PENDING,
       expiresAt,
