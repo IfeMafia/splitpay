@@ -13,6 +13,8 @@ import {
   WithdrawalResponse,
 } from './contracts';
 
+import { getSynchronousCache } from '../app/lib/api';
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5050/api';
 
 class ApiClient {
@@ -22,6 +24,10 @@ class ApiClient {
     if (typeof window !== 'undefined') {
       this.token = localStorage.getItem('sp_token') || localStorage.getItem('splitpay_token');
     }
+  }
+
+  getCached<T>(path: string): T | null {
+    return getSynchronousCache<T>(path);
   }
 
   getToken(): string | null {
