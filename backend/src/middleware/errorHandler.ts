@@ -60,6 +60,18 @@ export function errorHandler(err: Error, req: Request, res: Response, next: Next
     }
   }
 
+  // Handle Prisma Client Initialization / Connection Errors (Bad credentials, DB offline, etc.)
+  if (err instanceof Prisma.PrismaClientInitializationError) {
+    res.status(500).json({
+      error: {
+        code: 'DATABASE_CONNECTION_ERROR',
+        message: 'Failed to connect to the database. Check DATABASE_URL credentials in .env.',
+        details: process.env.NODE_ENV !== 'production' ? err.message : undefined,
+      },
+    });
+    return;
+  }
+
   // JSON parsing error
   if ('type' in err && (err as { type: string }).type === 'entity.parse.failed') {
     res.status(400).json({
@@ -75,7 +87,7 @@ export function errorHandler(err: Error, req: Request, res: Response, next: Next
   res.status(500).json({
     error: {
       code: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected error occurred.',
+      message: process.env.NODE_ENV !== 'production' ? err.message : 'An unexpected error occurred.',
     },
   });
 }
