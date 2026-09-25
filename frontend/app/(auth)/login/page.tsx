@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setToken, setUser, isAuthenticated } from "../../lib/auth";
+import GoogleAuthButton from "@/app/components/GoogleAuthButton";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -99,6 +100,21 @@ function LoginForm() {
           <p style={{ fontSize: 13, color: "#991B1B", lineHeight: 1.5 }}>{error}</p>
         </div>
       )}
+
+      {/* Social Login */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+        <GoogleAuthButton
+          text="continue_with"
+          onSuccess={() => router.replace(redirectUrl)}
+          onError={(err: string) => setError(err)}
+        />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+        <span style={{ fontSize: 12, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>Or email</span>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+      </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
@@ -236,4 +252,3 @@ function Spinner() {
     </svg>
   );
 }
-

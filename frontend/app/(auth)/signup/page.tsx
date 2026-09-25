@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setToken, setUser, isAuthenticated } from "../../lib/auth";
+import GoogleAuthButton from "@/app/components/GoogleAuthButton";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -21,10 +22,9 @@ interface FormErrors {
   defaultCurrency?: string;
 }
 
-
 export default function SignupPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense fallback={<div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>}>
       <SignupForm />
     </Suspense>
   );
@@ -33,10 +33,10 @@ export default function SignupPage() {
 function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Extract invitation token from redirect param, e.g. ?redirect=/invitations/some-token
   const redirectTo = searchParams.get("redirect") ?? "/dashboard";
   const invitationTokenMatch = redirectTo.match(/^\/invitations\/([^/]+)$/);
-  const invitationToken = invitationTokenMatch ? invitationTokenMatch[1] : undefined;
+  const invitationToken = searchParams.get("invite") || searchParams.get("invitationToken") || (invitationTokenMatch ? invitationTokenMatch[1] : undefined);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -86,42 +86,47 @@ function SignupForm() {
     setError("");
 
     try {
-      // Step 1: register (pass invitation token so backend can auto-accept)
-      const regRes = await fetch(`${BASE_URL}/auth/register`, {
+      const payload: Record<string, string> = {
+        fullName: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        password,
+        country: country.trim().toUpperCase(),
+        defaultCurrency: defaultCurrency.trim().toUpperCase(),
+      };
+      if (invitationToken) {
+        payload.invitationToken = invitationToken;
+      }
+
+      const res = await fetch(`${BASE_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: email.trim(),
-          password,
-          fullName: fullName.trim(),
-          defaultCurrency: defaultCurrency.trim().toUpperCase(),
-          country: country.trim().toUpperCase(),
-          ...(invitationToken ? { invitationToken } : {}),
-        }),
+        body: JSON.stringify(payload),
       });
-      const regBody = await regRes.json();
-      if (!regRes.ok) throw new Error(regBody?.message ?? `Error ${regRes.status}`);
 
-      // Step 2: the register endpoint returns a token and user directly
-      const regData = regBody.data ?? regBody;
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.error?.message ?? body?.message ?? `Error ${res.status}`);
+      }
+
+      const regData = body.data;
       if (regData?.token) {
         setToken(regData.token);
-        if (regData?.user) {
+        if (regData.user) {
           setUser(regData.user);
         }
         router.replace(redirectTo);
         return;
       }
 
-      // Fallback: auto-login if register didn't return token
+      // Auto-login fallback if register returns user without token
       const loginRes = await fetch(`${BASE_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
       const loginBody = await loginRes.json();
       if (!loginRes.ok) {
-        router.replace(`/login?registered=1${invitationToken ? `&redirect=${encodeURIComponent(redirectTo)}` : ""}`);
+        router.push(`/login?registered=1&email=${encodeURIComponent(email)}`);
         return;
       }
       setToken(loginBody.data?.token ?? loginBody.token);
@@ -171,10 +176,26 @@ function SignupForm() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} noValidate style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Social Signup */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+        <GoogleAuthButton
+          text="signup_with"
+          invitationToken={invitationToken}
+          onSuccess={() => router.replace(redirectTo)}
+          onError={(err: string) => setError(err)}
+        />
+      </div>
 
-        {/* Full Name */}
-        <Field label="Full name" htmlFor="fullName" error={liveErrors.fullName ?? formErrors.fullName}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+        <span style={{ fontSize: 12, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>Or register</span>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* Full name */}
+        <Field label="Full name" htmlFor="fullName" error={formErrors.fullName || liveErrors.fullName}>
           <input
             id="fullName"
             type="text"
@@ -182,15 +203,16 @@ function SignupForm() {
             onChange={e => setFullName(e.target.value)}
             onBlur={() => touch("fullName")}
             placeholder="Jane Doe"
+            required
             disabled={loading}
             autoComplete="name"
-            style={fieldInput(!!(liveErrors.fullName ?? formErrors.fullName))}
-            onFocus={e => focusRing(e, !!(liveErrors.fullName ?? formErrors.fullName))}
+            style={fieldInput(Boolean(formErrors.fullName || liveErrors.fullName))}
+            onFocus={e => focusRing(e, Boolean(formErrors.fullName || liveErrors.fullName))}
           />
         </Field>
 
         {/* Email */}
-        <Field label="Email address" htmlFor="email" error={liveErrors.email ?? formErrors.email}>
+        <Field label="Email address" htmlFor="email" error={formErrors.email || liveErrors.email}>
           <input
             id="email"
             type="email"
@@ -198,15 +220,16 @@ function SignupForm() {
             onChange={e => setEmail(e.target.value)}
             onBlur={() => touch("email")}
             placeholder="name@example.com"
+            required
             disabled={loading}
             autoComplete="email"
-            style={fieldInput(!!(liveErrors.email ?? formErrors.email))}
-            onFocus={e => focusRing(e, !!(liveErrors.email ?? formErrors.email))}
+            style={fieldInput(Boolean(formErrors.email || liveErrors.email))}
+            onFocus={e => focusRing(e, Boolean(formErrors.email || liveErrors.email))}
           />
         </Field>
 
         {/* Password */}
-        <Field label="Password" htmlFor="password" error={liveErrors.password ?? formErrors.password}>
+        <Field label="Password" htmlFor="password" hint="At least 8 characters" error={formErrors.password || liveErrors.password}>
           <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
             <input
               id="password"
@@ -214,29 +237,22 @@ function SignupForm() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               onBlur={() => touch("password")}
-              placeholder="At least 8 characters"
+              placeholder="••••••••"
+              required
               disabled={loading}
               autoComplete="new-password"
-              style={{ ...fieldInput(!!(liveErrors.password ?? formErrors.password)), paddingRight: "44px" }}
-              onFocus={e => focusRing(e, !!(liveErrors.password ?? formErrors.password))}
+              style={{ ...fieldInput(Boolean(formErrors.password || liveErrors.password)), paddingRight: "44px" }}
+              onFocus={e => focusRing(e, Boolean(formErrors.password || liveErrors.password))}
             />
             <button
               type="button"
               onClick={() => setShowPassword(v => !v)}
               aria-label={showPassword ? "Hide password" : "Show password"}
               style={{
-                position: "absolute",
-                right: 12,
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "6px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#777",
-                borderRadius: "6px",
-                transition: "color 140ms",
+                position: "absolute", right: 12,
+                background: "transparent", border: "none", cursor: "pointer",
+                padding: "6px", display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#777", borderRadius: "6px", transition: "color 140ms",
               }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#0A0A0A"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#777"; }}
@@ -246,38 +262,53 @@ function SignupForm() {
           </div>
         </Field>
 
-        {/* Country + Currency row */}
+        {/* Country & Currency row */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <Field label="Country" htmlFor="country" hint="2-letter code" error={liveErrors.country ?? formErrors.country}>
+          <Field label="Country" htmlFor="country" hint="2 letters" error={formErrors.country || liveErrors.country}>
             <input
               id="country"
               type="text"
+              maxLength={2}
               value={country}
               onChange={e => setCountry(e.target.value.toUpperCase())}
               onBlur={() => touch("country")}
               placeholder="NG"
-              maxLength={2}
+              required
               disabled={loading}
-              style={{ ...fieldInput(!!(liveErrors.country ?? formErrors.country)), fontFamily: "var(--font-geist-mono)" }}
-              onFocus={e => focusRing(e, !!(liveErrors.country ?? formErrors.country))}
+              style={fieldInput(Boolean(formErrors.country || liveErrors.country))}
+              onFocus={e => focusRing(e, Boolean(formErrors.country || liveErrors.country))}
             />
           </Field>
-
-          <Field label="Currency" htmlFor="defaultCurrency" hint="3-letter code" error={liveErrors.defaultCurrency ?? formErrors.defaultCurrency}>
+          <Field label="Currency" htmlFor="defaultCurrency" hint="3 letters" error={formErrors.defaultCurrency || liveErrors.defaultCurrency}>
             <input
               id="defaultCurrency"
               type="text"
+              maxLength={3}
               value={defaultCurrency}
               onChange={e => setDefaultCurrency(e.target.value.toUpperCase())}
               onBlur={() => touch("defaultCurrency")}
               placeholder="NGN"
-              maxLength={3}
+              required
               disabled={loading}
-              style={{ ...fieldInput(!!(liveErrors.defaultCurrency ?? formErrors.defaultCurrency)), fontFamily: "var(--font-geist-mono)" }}
-              onFocus={e => focusRing(e, !!(liveErrors.defaultCurrency ?? formErrors.defaultCurrency))}
+              style={fieldInput(Boolean(formErrors.defaultCurrency || liveErrors.defaultCurrency))}
+              onFocus={e => focusRing(e, Boolean(formErrors.defaultCurrency || liveErrors.defaultCurrency))}
             />
           </Field>
         </div>
+
+        {/* Invitation notice if token present */}
+        {invitationToken && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "10px 14px", borderRadius: 10,
+            background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)",
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span style={{ fontSize: 13, color: "#15803D" }}>Pool invitation detected — you will join automatically after sign up.</span>
+          </div>
+        )}
 
         <button
           type="submit"
@@ -287,9 +318,8 @@ function SignupForm() {
             background: loading ? "#555" : "#0A0A0A", color: "#fff", border: "none",
             fontSize: 14, fontWeight: 500,
             cursor: loading ? "not-allowed" : "pointer",
-            marginTop: 6, transition: "background 140ms",
+            marginTop: 8, transition: "background 140ms",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            fontFamily: "var(--font-outfit)",
           }}
           onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = "#222"; }}
           onMouseLeave={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
@@ -299,16 +329,16 @@ function SignupForm() {
 
       </form>
 
-      <div style={{ marginTop: 28, fontSize: 12.5, color: "#aaa", lineHeight: 1.6 }}>
+      <div style={{ marginTop: 24, textAlign: "center", fontSize: 13, color: "#777", lineHeight: 1.6 }}>
         By continuing, you agree to Splitpay&apos;s{" "}
-        <Link href="/terms" style={{ color: "#888", textDecoration: "underline", textUnderlineOffset: 2 }}>Terms of Service</Link>
+        <Link href="/terms" style={{ color: "#0A0A0A", textDecoration: "underline", textUnderlineOffset: 2 }}>Terms of Service</Link>
         {" "}and{" "}
-        <Link href="/privacy" style={{ color: "#888", textDecoration: "underline", textUnderlineOffset: 2 }}>Privacy Policy</Link>.
+        <Link href="/privacy" style={{ color: "#0A0A0A", textDecoration: "underline", textUnderlineOffset: 2 }}>Privacy Policy</Link>.
       </div>
 
-      <div style={{ marginTop: 24, fontSize: 14, color: "#666" }}>
+      <div style={{ marginTop: 24, textAlign: "center", fontSize: 14, color: "#666" }}>
         Already have an account?{" "}
-        <Link href="/login" style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>Log in</Link>
+        <Link href={`/login${redirectTo !== "/dashboard" ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`} style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>Log in</Link>
       </div>
 
       <style>{`
@@ -376,4 +406,3 @@ function EyeOffIcon() {
     </svg>
   );
 }
-
