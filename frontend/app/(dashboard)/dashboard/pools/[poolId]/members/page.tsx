@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatDate, formatRelativeTime, formatPercent, shortId } from "../../../../../lib/format";
+import { toast } from "@/app/components/Toast";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -157,7 +158,7 @@ export default function MembersPage({ params }: Props) {
       await api.delete<void>(`/collaborators/${id}`);
       setCollaborators(prev => prev.filter(c => c.id !== id));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to remove collaborator.");
+      toast.error(err, "Failed to remove collaborator.");
     } finally {
       setRemovingId(null);
     }
