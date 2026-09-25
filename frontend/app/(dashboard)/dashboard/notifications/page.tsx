@@ -20,9 +20,10 @@ type Filter = "all" | "unread";
 type PageState = "loading" | "ready" | "error";
 
 export default function NotificationsPage() {
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const cachedNotes = api.getCached<NotificationItem[]>("/notifications");
+  const [notifications, setNotifications] = useState<NotificationItem[]>(cachedNotes ?? []);
   const [filter, setFilter] = useState<Filter>("all");
-  const [pageState, setPageState] = useState<PageState>("loading");
+  const [pageState, setPageState] = useState<PageState>(cachedNotes ? "ready" : "loading");
   const [errorMsg, setErrorMsg] = useState("");
   const [markingAll, setMarkingAll] = useState(false);
 
