@@ -4,10 +4,18 @@ import { AppError } from '../../middleware/errorHandler';
 import { CreatePaymentLinkDto, UpdatePaymentLinkDto, InitializePaymentDto } from './validators';
 import { PaymentLinkResponse } from '../../contracts';
 import { PaymentStatus } from '@prisma/client';
-import { generateShortToken } from '../../utils/token';
+import { generateShortToken, generateDigitCode, generateCharToken } from '../../utils/token';
 
-function generateLinkToken(): string {
-  return generateShortToken();
+async function generateLinkToken(): Promise<string> {
+  let code = generateCharToken(3);
+  let existing = await prisma.paymentLink.findUnique({ where: { token: code } });
+  let attempts = 0;
+  while (existing && attempts < 15) {
+    code = generateCharToken(3);
+    existing = await prisma.paymentLink.findUnique({ where: { token: code } });
+    attempts++;
+  }
+  return existing ? `${code}-${crypto.randomBytes(2).toString('hex')}` : code;
 }
 
 export async function createPaymentLink(
@@ -15,7 +23,7 @@ export async function createPaymentLink(
   userId: string,
   dto: CreatePaymentLinkDto,
 ): Promise<PaymentLinkResponse> {
-  const token = generateLinkToken();
+  const token = await generateLinkToken();
 
   const link = await prisma.paymentLink.create({
     data: {

@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { InvitationStatus, InvitationType, PoolRole } from '@prisma/client';
-import { generateShortToken, generateDigitCode } from '../../utils/token';
+import { generateShortToken, generateDigitCode, generateCharToken } from '../../utils/token';
 
 export interface CreateInvitationDto {
   projectId?: string;
@@ -142,12 +142,12 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
     }
   }
 
-  // Generate a 3-digit numeric invite code
-  let inviteCode = generateDigitCode(3);
+  // Generate a 3-character letter invite code (e.g. "abc", "xyz")
+  let inviteCode = generateCharToken(3);
   let existingToken = await prisma.poolInvitation.findUnique({ where: { token: inviteCode } });
   let attempts = 0;
   while (existingToken && attempts < 15) {
-    inviteCode = generateDigitCode(3);
+    inviteCode = generateCharToken(3);
     existingToken = await prisma.poolInvitation.findUnique({ where: { token: inviteCode } });
     attempts++;
   }

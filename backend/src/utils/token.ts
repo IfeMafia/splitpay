@@ -21,6 +21,20 @@ export function generateShortToken(chunkLength: number = 3, numChunks: number = 
 }
 
 /**
+ * Generates a short code consisting of characters/letters only.
+ * Default: 3 characters (e.g. "abc", "xyz", "kfa")
+ */
+export function generateCharToken(length: number = 3): string {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    const randomIndex = crypto.randomInt(0, letters.length);
+    code += letters[randomIndex];
+  }
+  return code;
+}
+
+/**
  * Generates a short numeric code consisting of digits only.
  * Default: 3 digits (e.g. "482", "719")
  */
