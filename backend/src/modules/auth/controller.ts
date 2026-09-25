@@ -59,3 +59,28 @@ export async function googleAuth(req: AuthenticatedRequest, res: Response, next:
     next(err);
   }
 }
+
+export async function forgotPassword(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await authService.forgotPassword(req.body);
+    res.status(200).json({
+      data: result,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetPassword(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await authService.resetPassword(req.body);
+    res.status(200).json({
+      data: result,
+      message: result.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
