@@ -7,7 +7,7 @@ import {
   SplitAllocationResponse,
   PoolBalanceResponse,
 } from '../../contracts';
-import { SplitType, AllocationStatus, PaymentStatus, WithdrawalStatus, Prisma } from '@prisma/client';
+import { SplitType, AllocationStatus, PaymentStatus, WithdrawalStatus, InvitationStatus, Prisma } from '@prisma/client';
 
 export async function getSplitConfig(poolId: string): Promise<SplitConfigResponse> {
   const existingConfig = await prisma.splitConfiguration.findFirst({

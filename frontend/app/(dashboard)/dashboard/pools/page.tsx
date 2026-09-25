@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "../../../lib/api";
 import StatusBadge from "../../../components/ui/StatusBadge";
 import { formatAmount, formatDate } from "../../../lib/format";
@@ -10,7 +11,7 @@ interface Pool {
   id: string;
   name: string;
   description: string | null;
-  totalAmount: number;
+  memberCount: number;
   currency: string;
   status: string;
   createdAt: string;
@@ -23,6 +24,36 @@ export default function PoolsPage() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const router = useRouter();
+
+  // Join by invite code
+  const [showJoin, setShowJoin] = useState(false);
+  const [joinInput, setJoinInput] = useState("");
+  const [joinError, setJoinError] = useState("");
+
+  function handleJoin() {
+    if (!joinInput.trim()) {
+      setJoinError("Please enter an invite link or code.");
+      return;
+    }
+    setJoinError("");
+    // Extract the token from a full URL or use as-is (raw UUID)
+    const raw = joinInput.trim();
+    let token = raw;
+    try {
+      const url = new URL(raw);
+      const parts = url.pathname.split("/").filter(Boolean);
+      // /invitations/:token  → last segment
+      const idx = parts.indexOf("invitations");
+      if (idx !== -1 && parts[idx + 1]) {
+        token = parts[idx + 1];
+      }
+    } catch {
+      // Not a URL — treat as raw token/code
+    }
+    router.push(`/invitations/${token}`);
+  }
 
   useEffect(() => {
     api.get<Pool[]>("/projects")
@@ -52,25 +83,92 @@ export default function PoolsPage() {
             Your Pools
           </h1>
         </div>
-        <Link
-          href="/dashboard/pools/new"
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 7,
-            padding: "9px 18px", borderRadius: 100,
-            background: "#0A0A0A", color: "#fff",
-            fontSize: 13, fontWeight: 500, textDecoration: "none",
-            whiteSpace: "nowrap", flexShrink: 0,
-            transition: "background 140ms",
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          New Pool
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={() => { setShowJoin(s => !s); setJoinError(""); setJoinInput(""); }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              padding: "9px 18px", borderRadius: 100,
+              background: "none", color: "#555", border: "1px solid rgba(0,0,0,0.12)",
+              fontSize: 13, fontWeight: 500, cursor: "pointer",
+              transition: "background 140ms", flexShrink: 0,
+              fontFamily: "inherit",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+          >
+            Join a Pool
+          </button>
+          <Link
+            href="/dashboard/pools/new"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              padding: "9px 18px", borderRadius: 100,
+              background: "#0A0A0A", color: "#fff",
+              fontSize: 13, fontWeight: 500, textDecoration: "none",
+              whiteSpace: "nowrap", flexShrink: 0,
+              transition: "background 140ms",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New Pool
+          </Link>
+        </div>
       </div>
+
+      {/* Join by invite code section */}
+      {showJoin && (
+        <div style={{
+          marginBottom: 24, padding: "18px 20px", borderRadius: 12,
+          border: "1px solid rgba(0,0,0,0.10)", background: "#fff",
+        }}>
+          <p style={{ fontSize: 13.5, fontWeight: 500, color: "#0A0A0A", marginBottom: 4 }}>Join a Pool</p>
+          <p style={{ fontSize: 12.5, color: "#999", marginBottom: 14 }}>Paste an invite link or code shared with you by the Pool owner.</p>
+          {joinError && <p style={{ fontSize: 12, color: "#DC2626", marginBottom: 10 }}>{joinError}</p>}
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+            <input
+              type="text"
+              placeholder="https://…/invitations/… or paste code"
+              value={joinInput}
+              onChange={e => setJoinInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleJoin()}
+              style={{
+                flex: 1, padding: "10px 13px", borderRadius: 9,
+                border: "1px solid rgba(0,0,0,0.12)", background: "#fff",
+                fontSize: 13, color: "#0A0A0A", outline: "none",
+                fontFamily: "var(--font-mono)",
+              }}
+              autoFocus
+            />
+            <button
+              onClick={handleJoin}
+              style={{
+                padding: "10px 18px", borderRadius: 9,
+                background: "#0A0A0A", color: "#fff", border: "none",
+                fontSize: 13, fontWeight: 500, cursor: "pointer",
+                whiteSpace: "nowrap", fontFamily: "inherit",
+              }}
+            >
+              Join
+            </button>
+            <button
+              onClick={() => { setShowJoin(false); setJoinInput(""); setJoinError(""); }}
+              style={{
+                padding: "10px 14px", borderRadius: 9,
+                background: "none", border: "1px solid rgba(0,0,0,0.10)",
+                color: "#888", fontSize: 13, cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Loading */}
       {loadState === "loading" && (
@@ -225,8 +323,8 @@ export default function PoolsPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-                    {formatAmount(pool.totalAmount, pool.currency)}
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "#888" }}>
+                    {pool.memberCount} {pool.memberCount === 1 ? "member" : "members"}
                   </span>
                   <StatusBadge status={pool.status} />
                 </div>

@@ -23,7 +23,7 @@ export async function getProjectCollaborators(req: AuthenticatedRequest, res: Re
   try {
     const { projectId } = req.params;
     const result = await collaboratorService.getProjectCollaborators(projectId as string);
-    res.status(200).json(result);
+    res.status(200).json({ data: result });
   } catch (err) {
     next(err);
   }

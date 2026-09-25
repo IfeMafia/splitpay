@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getToken, isAuthenticated } from "../../lib/auth";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5050/api";
 
 /* ─── Types ───────────────────────────────────── */
 
