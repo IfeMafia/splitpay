@@ -1,5 +1,22 @@
 import { prisma } from '../../lib/prisma';
-import { CreateAuditLogDto, AuditLogResponse } from './types';
+
+export interface CreateAuditLogDto {
+  entityType: string;
+  entityId: string;
+  action: string;
+  actorId?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+export interface AuditLogResponse {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  actorId: string | null;
+  metadata: any;
+  createdAt: Date;
+}
 
 export async function logAction(dto: CreateAuditLogDto): Promise<AuditLogResponse> {
   const log = await prisma.auditLog.create({

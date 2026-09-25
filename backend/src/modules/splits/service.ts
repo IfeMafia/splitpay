@@ -50,11 +50,19 @@ export async function configureSplit(
   userId: string,
   dto: ConfigureSplitDto,
 ): Promise<SplitConfigResponse> {
-  const members = await prisma.poolMember.findMany({
-    where: { poolId },
-  });
+  const [members, invitations] = await Promise.all([
+    prisma.poolMember.findMany({ where: { poolId } }),
+    prisma.poolInvitation.findMany({
+      where: { poolId, status: InvitationStatus.PENDING },
+    }),
+  ]);
 
-  const memberIds = new Set(members.map((m) => m.id));
+  const memberIds = new Set([
+    ...members.map((m) => m.id),
+    ...members.map((m) => m.userId),
+    ...invitations.map((i) => i.token),
+    ...invitations.map((i) => i.id),
+  ]);
 
   let finalConfig: { memberId: string; percentage: number }[] = [];
 
@@ -70,10 +78,15 @@ export async function configureSplit(
     }
     finalConfig = dto.shares;
   } else {
-    // Equal distribution among all pool members
-    const equalPct = members.length > 0 ? Math.round((100 / members.length) * 100) / 100 : 0;
-    finalConfig = members.map((m) => ({
-      memberId: m.id,
+    // Equal distribution among all pool members and invited collaborators
+    const allParticipantIds = [
+      ...members.map((m) => m.id),
+      ...invitations.map((i) => i.token),
+    ];
+    const count = allParticipantIds.length;
+    const equalPct = count > 0 ? Math.round((100 / count) * 100) / 100 : 0;
+    finalConfig = allParticipantIds.map((id) => ({
+      memberId: id,
       percentage: equalPct,
     }));
   }

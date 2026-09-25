@@ -62,8 +62,8 @@ interface SidebarProps {
 export default function Sidebar({
   collapsed,
   onToggle,
-  userName = "Abraham",
-  userEmail = "abraham@example.com",
+  userName = "User",
+  userEmail = "",
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();

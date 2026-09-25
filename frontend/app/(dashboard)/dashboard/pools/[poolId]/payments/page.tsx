@@ -328,21 +328,44 @@ export default function PaymentsPage({ params }: Props) {
                     }}>
                       {publicUrl}
                     </span>
-                    <button
-                      onClick={() => copyLink(p.paymentLinkToken, p.id)}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        padding: "5px 11px", borderRadius: 6,
-                        background: isCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
-                        border: "none", cursor: "pointer",
-                        fontSize: 11.5, fontWeight: 500,
-                        color: isCopied ? "#166534" : "#555",
-                        transition: "all 120ms", whiteSpace: "nowrap",
-                        fontFamily: "var(--font-sans)",
-                      }}
-                    >
-                      {isCopied ? <><CheckIcon color="#166534" size={11} /> Copied</> : <><CopyIcon /> Copy link</>}
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => copyLink(p.paymentLinkToken, p.id)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "5px 11px", borderRadius: 6,
+                          background: isCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
+                          border: "none", cursor: "pointer",
+                          fontSize: 11.5, fontWeight: 500,
+                          color: isCopied ? "#166534" : "#555",
+                          transition: "all 120ms", whiteSpace: "nowrap",
+                          fontFamily: "var(--font-sans)",
+                        }}
+                      >
+                        {isCopied ? <><CheckIcon color="#166534" size={11} /> Copied</> : <><CopyIcon /> Copy link</>}
+                      </button>
+                      {!isPaid && (
+                        <a
+                          href={publicUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "5px 11px", borderRadius: 6,
+                            background: "rgba(0,0,0,0.06)",
+                            fontSize: 11.5, fontWeight: 500, color: "#555",
+                            textDecoration: "none", whiteSpace: "nowrap",
+                            fontFamily: "var(--font-sans)",
+                          }}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                          </svg>
+                          Open
+                        </a>
+                      )}
+                    </div>
                   </div>
 
                   {/* Meta row */}
@@ -364,10 +387,10 @@ export default function PaymentsPage({ params }: Props) {
             })}
           </div>
 
-          {/* Notice: payment gateway not connected */}
-          <div style={{ marginTop: 20, padding: "13px 16px", borderRadius: 10, background: "rgba(202,138,4,0.04)", border: "1px solid rgba(202,138,4,0.14)" }}>
-            <p style={{ fontSize: 12, color: "#854D0E", lineHeight: 1.55 }}>
-              <strong>Payment gateway pending.</strong> The link is generated and shareable, but client payment processing requires Paystack integration. Token: <span style={{ fontFamily: "var(--font-mono)" }}>{payments[0]?.paymentLinkToken.slice(0, 12)}…</span>
+          {/* How payments work note */}
+          <div style={{ marginTop: 20, padding: "13px 16px", borderRadius: 10, background: "rgba(22,163,74,0.03)", border: "1px solid rgba(22,163,74,0.12)" }}>
+            <p style={{ fontSize: 12, color: "#166534", lineHeight: 1.55 }}>
+              <strong>Live payments enabled.</strong> Share the link with your client — they pay via Paystack and funds are automatically split between collaborators.
             </p>
           </div>
         </div>

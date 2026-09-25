@@ -124,12 +124,13 @@ export default function MembersPage({ params }: Props) {
       });
       setCollaborators(prev => [...prev, newCollab]);
       setInviteState("success");
-      // Reset form after short delay
+      // Reset form after short delay and reload from server
       setTimeout(() => {
         setEmail(""); setRole("Collaborator"); setSplitPct("");
         setTouched({}); setFormErrors({});
         setInviteState("idle"); setShowForm(false);
-      }, 1400);
+        load();
+      }, 1200);
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : "Failed to send invitation.");
       setInviteState("error");

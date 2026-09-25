@@ -435,11 +435,11 @@ export default function PoolWorkspacePage({ params }: Props) {
             <SideAction
               href={`/dashboard/pools/${poolId}/split`}
               label="Configure split"
-              disabled={!confirmedPayment}
+              disabled={!hasCollaborators}
             />
             <SideAction
               href={`/dashboard/pools/${poolId}/withdrawals`}
-              label="Withdrawals"
+              label="Balance & Transactions"
               disabled={!splitAllocated || !confirmedPayment}
             />
           </div>

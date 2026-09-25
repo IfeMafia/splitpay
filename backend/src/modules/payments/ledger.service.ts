@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { verifyPaystackTransaction } from '../../lib/paystack';
+import { PaymentStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
 export interface FinancialChainBreakdown {
@@ -20,6 +21,7 @@ export interface FinancialChainBreakdown {
 
 /**
  * Calculates the exact financial chain values using integer minor-unit arithmetic (kobo).
+ * This is a pure function — no side effects.
  */
 export function calculateFinancialChain(
   grossAmountNaira: number,
@@ -32,7 +34,6 @@ export function calculateFinancialChain(
     splitPercentage: number | Prisma.Decimal | any;
   }>
 ): FinancialChainBreakdown {
-  // Convert all currency amounts to kobo (integer minor units)
   const grossKobo = Math.round(grossAmountNaira * 100);
   const providerFeeKobo = Math.round(providerFeeNaira * 100);
   const platformFeeKobo = Math.round(grossKobo * (platformFeePercent / 100));
@@ -42,15 +43,14 @@ export function calculateFinancialChain(
 
   let allocatedKoboSum = 0;
   const allocations = collaborators.map((c, idx) => {
-    const splitPct = typeof c.splitPercentage === 'number' ? c.splitPercentage : Number(c.splitPercentage);
+    const splitPct =
+      typeof c.splitPercentage === 'number' ? c.splitPercentage : Number(c.splitPercentage);
     let allocKobo = Math.floor(distributableKobo * (splitPct / 100));
-    
-    // For the last collaborator, assign remaining minor units to guarantee 100% total allocation
+    // Last collaborator gets any remaining kobo to guarantee 100% total
     if (idx === collaborators.length - 1) {
       allocKobo = distributableKobo - allocatedKoboSum;
     }
     allocatedKoboSum += allocKobo;
-
     return {
       collaboratorId: c.id,
       userId: c.userId,
@@ -71,129 +71,160 @@ export function calculateFinancialChain(
 }
 
 /**
- * Authoritative Payment Confirmation & State Machine Execution.
- * Guarantees idempotency and executes the financial chain in a single database transaction.
+ * Authoritative Payment Confirmation & State Machine.
+ * 1. Verify with Paystack
+ * 2. Update Transaction to SUCCESSFUL/FAILED
+ * 3. Build SplitSnapshot from current PoolMembers
+ * 4. Persist SplitAllocations
+ * Returns the payment data and financial breakdown as per Tobi's docs.
  */
-export async function confirmPaymentTransaction(reference: string): Promise<{ payment: any; breakdown: FinancialChainBreakdown }> {
-  // 1. Find payment record by providerReference or paymentLinkToken
-  let payment = await prisma.payment.findFirst({
-    where: {
-      OR: [{ providerReference: reference }, { paymentLinkToken: reference }],
-    },
+export async function confirmPaymentTransaction(
+  reference: string
+): Promise<{ payment: any; breakdown: FinancialChainBreakdown }> {
+  // 1. Find the Transaction by providerReference
+  const transaction = await prisma.transaction.findUnique({
+    where: { providerReference: reference },
     include: {
-      project: {
-        include: {
-          collaborators: true,
-        },
-      },
+      paymentLink: true,
+      pool: { include: { members: { include: { user: true } } } },
+      splitSnapshot: { include: { allocations: true } },
     },
   });
 
-  if (!payment) {
-    throw new AppError(404, `Payment with reference ${reference} not found`, 'NOT_FOUND');
+  if (!transaction) {
+    throw new AppError(404, 'Transaction not found for this reference', 'NOT_FOUND');
   }
 
-  // Idempotency Check: If already successful, return early without re-running calculations
-  if (payment.status === 'SUCCESSFUL') {
-    const existingSnapshot = await prisma.splitSnapshot.findUnique({
-      where: { paymentId: payment.id },
-    });
+  // 2. Idempotency — if already confirmed, return persisted breakdown
+  if (transaction.status === PaymentStatus.SUCCESSFUL && transaction.splitSnapshot) {
+    const snapshot = transaction.splitSnapshot;
+    const breakdown: FinancialChainBreakdown = {
+      grossAmount: Number(snapshot.totalAmount),
+      providerFee: 0,
+      platformFee: 0,
+      tax: 0,
+      distributableAmount: Number(snapshot.distributableAmount),
+      collaboratorAllocations: snapshot.allocations.map(a => ({
+        collaboratorId: a.poolMemberId,
+        userId: null,
+        role: 'Collaborator',
+        splitPercentage: Number(a.percentage),
+        amount: Number(a.amount),
+      })),
+    };
     return {
-      payment,
-      breakdown: (existingSnapshot?.snapshotData as any) || {},
+      payment: {
+        id: transaction.id,
+        status: 'SUCCESSFUL',
+        actualAmount: Number(transaction.amount).toFixed(2),
+        paidAt: transaction.paidAt,
+      },
+      breakdown,
     };
   }
 
-  // 2. Perform authoritative verification with Paystack
-  const verifyData = await verifyPaystackTransaction(reference);
+  // 3. Verify with Paystack
+  const paystackData = await verifyPaystackTransaction(reference);
+  const isSuccess = paystackData.status === 'success';
 
-  if (verifyData.status !== 'success') {
-    // Update payment status to FAILED if Paystack reports failure
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: 'FAILED', providerReference: reference },
+  if (!isSuccess) {
+    // Mark transaction as failed
+    await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: { status: PaymentStatus.FAILED },
     });
-    throw new AppError(400, `Payment verification failed with status: ${verifyData.status}`, 'PAYMENT_FAILED');
+    return {
+      payment: {
+        id: transaction.id,
+        status: 'FAILED',
+        actualAmount: Number(transaction.amount).toFixed(2),
+        paidAt: null,
+      },
+      breakdown: calculateFinancialChain(Number(transaction.amount), 0, 0, []),
+    };
   }
 
-  const grossAmount = verifyData.amountInNaira || Number(payment.expectedAmount);
-  const platformFeePct = payment.project.platformFeePercent ? Number(payment.project.platformFeePercent) : 0;
-  const providerFee = verifyData.feesInNaira || (grossAmount * 0.015);
+  // 4. Build pool members for allocation
+  const members = transaction.pool.members;
+  const equalSplit = members.length > 0 ? 100 / members.length : 0;
+  const collaboratorsForCalc = members.map(m => ({
+    id: m.id,
+    userId: m.userId,
+    role: m.role,
+    splitPercentage: equalSplit,
+  }));
 
-  // 3. Calculate Financial Chain & Allocations
   const breakdown = calculateFinancialChain(
-    grossAmount,
-    platformFeePct,
-    providerFee,
-    payment.project.collaborators
+    paystackData.amountInNaira,
+    0,           // platform fee %
+    paystackData.feesInNaira,
+    collaboratorsForCalc
   );
 
-  // 4. Atomic Execution via Prisma Transaction
-  const result = await prisma.$transaction(async (tx) => {
-    // A. Update Payment Record to SUCCESSFUL
-    const updatedPayment = await tx.payment.update({
-      where: { id: payment.id },
+  // 5. Persist everything in a transaction
+  await prisma.$transaction(async tx => {
+    // Update transaction record
+    await tx.transaction.update({
+      where: { id: transaction.id },
       data: {
-        status: 'SUCCESSFUL',
-        actualAmount: breakdown.grossAmount,
-        providerReference: reference,
-        paidAt: verifyData.paidAt ? new Date(verifyData.paidAt) : new Date(),
+        status: PaymentStatus.SUCCESSFUL,
+        amount: paystackData.amountInNaira,
+        payerEmail: paystackData.customerEmail,
+        paidAt: paystackData.paidAt ? new Date(paystackData.paidAt) : new Date(),
       },
     });
 
-    // B. Freeze SplitSnapshot
-    await tx.splitSnapshot.create({
+    // Create SplitSnapshot (immutable freeze)
+    const snapshot = await tx.splitSnapshot.create({
       data: {
-        projectId: payment.projectId,
-        paymentId: payment.id,
-        snapshotData: breakdown as unknown as Prisma.InputJsonValue,
+        poolId: transaction.poolId,
+        transactionId: transaction.id,
+        type: 'EQUAL',
+        snapshotData: collaboratorsForCalc as any,
+        totalAmount: breakdown.grossAmount,
+        distributableAmount: breakdown.distributableAmount,
       },
     });
 
-    // C. Create PayoutTransaction entries for each collaborator
-    for (const alloc of breakdown.collaboratorAllocations) {
-      await tx.payoutTransaction.create({
-        data: {
-          paymentId: payment.id,
-          collaboratorId: alloc.collaboratorId,
-          amount: alloc.amount,
-          currency: payment.currency,
-          status: 'PENDING',
-        },
+    // Create SplitAllocations
+    if (members.length > 0) {
+      await tx.splitAllocation.createMany({
+        data: breakdown.collaboratorAllocations.map(a => ({
+          snapshotId: snapshot.id,
+          poolMemberId: a.collaboratorId,
+          percentage: a.splitPercentage,
+          amount: a.amount,
+          currency: transaction.currency,
+        })),
       });
     }
 
-    // D. Update ProjectAccount ledger balance
-    await tx.projectAccount.upsert({
-      where: { projectId: payment.projectId },
-      create: {
-        projectId: payment.projectId,
-        totalReceived: breakdown.grossAmount,
-        currentBalance: breakdown.distributableAmount,
-        currency: payment.currency,
-      },
-      update: {
-        totalReceived: { increment: breakdown.grossAmount },
-        currentBalance: { increment: breakdown.distributableAmount },
-      },
-    });
+    // Mark payment link as inactive (can't be paid again)
+    if (transaction.paymentLinkId) {
+      await tx.paymentLink.update({
+        where: { id: transaction.paymentLinkId },
+        data: { isActive: false },
+      });
+    }
 
-    // E. Log immutable ledger entry in AuditLog
+    // Audit log
     await tx.auditLog.create({
       data: {
-        entityType: 'LEDGER_ENTRY',
-        entityId: payment.id,
+        entityType: 'TRANSACTION',
+        entityId: transaction.id,
         action: 'PAYMENT_CONFIRMED',
-        metadata: {
-          reference,
-          projectId: payment.projectId,
-          financialChain: breakdown,
-        } as unknown as Prisma.InputJsonValue,
+        metadata: { reference, grossAmount: breakdown.grossAmount },
       },
     });
-
-    return updatedPayment;
   });
 
-  return { payment: result, breakdown };
+  return {
+    payment: {
+      id: transaction.id,
+      status: 'SUCCESSFUL',
+      actualAmount: paystackData.amountInNaira.toFixed(2),
+      paidAt: paystackData.paidAt ?? new Date().toISOString(),
+    },
+    breakdown,
+  };
 }
