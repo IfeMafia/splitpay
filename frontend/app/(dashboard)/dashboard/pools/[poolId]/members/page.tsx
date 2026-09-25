@@ -169,13 +169,12 @@ export default function MembersPage({ params }: Props) {
     setCodeInviteError("");
     try {
       // Create a CODE-type invitation (no email = invite code)
-      const result = await api.post<Collaborator>("/collaborators", {
+      const result = await api.post<Collaborator & { code?: string }>("/collaborators", {
         projectId: poolId,
         role: "Collaborator",
         splitPercentage: 0,
       });
-      // The returned id is the UUID token which serves as the invite code
-      setInviteCode({ code: result.id });
+      setInviteCode({ code: result.code || result.id });
       setCodeInviteState("success");
       setShowCodeSection(true);
     } catch (err) {
