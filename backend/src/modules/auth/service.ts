@@ -1,9 +1,10 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
-import { RegisterDto, LoginDto, GoogleAuthDto } from './validators';
+import { RegisterDto, LoginDto, GoogleAuthDto, ForgotPasswordDto, ResetPasswordDto } from './validators';
 import { AuthResponse, UserProfile } from '../../contracts';
 import { InvitationStatus, PoolRole } from '@prisma/client';
 
@@ -273,3 +274,66 @@ export async function googleAuth(dto: GoogleAuthDto): Promise<AuthResponse> {
     token,
   };
 }
+
+export async function forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string; token?: string }> {
+  const email = dto.email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (!user) {
+    // Return friendly success message to prevent account enumeration
+    return { message: "If an account with that email exists, password reset instructions have been generated." };
+  }
+
+  const db = prisma as any;
+
+  // Delete any existing reset tokens for this email
+  await db.passwordResetToken.deleteMany({
+    where: { email },
+  });
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiration
+
+  await db.passwordResetToken.create({
+    data: {
+      email,
+      token: resetToken,
+      expiresAt,
+    },
+  });
+
+  return {
+    message: "Password reset link generated successfully.",
+    token: resetToken,
+  };
+}
+
+export async function resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+  const db = prisma as any;
+  const resetTokenRecord = await db.passwordResetToken.findUnique({
+    where: { token: dto.token },
+  });
+
+  if (!resetTokenRecord || resetTokenRecord.expiresAt < new Date()) {
+    throw new AppError(400, "Invalid or expired password reset link", "INVALID_RESET_TOKEN");
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const passwordHash = await bcrypt.hash(dto.newPassword, salt);
+
+  await prisma.user.update({
+    where: { email: resetTokenRecord.email },
+    data: { passwordHash },
+  });
+
+  // Delete used token
+  await db.passwordResetToken.delete({
+    where: { id: resetTokenRecord.id },
+  });
+
+  return { message: "Password reset successfully. You can now log in with your new password." };
+}
+
+
