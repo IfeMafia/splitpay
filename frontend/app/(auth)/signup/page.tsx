@@ -1,22 +1,151 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { setToken, setUser, isAuthenticated } from "../../lib/auth";
+import GoogleAuthButton from "@/app/components/GoogleAuthButton";
+import { toast } from "@/app/components/Toast";
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
+
+interface RegisterResult {
+  id: string;
+  email: string;
+  fullName: string;
+}
+
+interface FormErrors {
+  fullName?: string;
+  email?: string;
+  password?: string;
+  country?: string;
+  defaultCurrency?: string;
+}
 
 export default function SignupPage() {
-  const [loading, setIsloading] = useState(false);
-  const [name, setName] = useState("");
+  return (
+    <Suspense fallback={<div style={{ padding: 40, textAlign: "center" }}><Spinner /></div>}>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") ?? "/dashboard";
+  const invitationTokenMatch = redirectTo.match(/^\/invitations\/([^/]+)$/);
+  const invitationToken = searchParams.get("invite") || searchParams.get("invitationToken") || (invitationTokenMatch ? invitationTokenMatch[1] : undefined);
+
+  const [loading, setLoading] = useState(false);
+
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [country, setCountry] = useState("NG");
+  const [defaultCurrency, setDefaultCurrency] = useState("NGN");
+  const [showPassword, setShowPassword] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      router.replace(redirectTo);
+    }
+  }, [router, redirectTo]);
+
+  function validate(): FormErrors {
+    const errs: FormErrors = {};
+    if (!fullName.trim()) errs.fullName = "Full name is required.";
+    if (!email.trim()) errs.email = "Email is required.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Enter a valid email address.";
+    if (!password) errs.password = "Password is required.";
+    else if (password.length < 8) errs.password = "Password must be at least 8 characters.";
+    if (!country.trim() || country.length !== 2) errs.country = "Enter a 2-letter country code (e.g. NG).";
+    if (!defaultCurrency.trim() || defaultCurrency.length !== 3) errs.defaultCurrency = "Enter a 3-letter currency code (e.g. NGN).";
+    return errs;
+  }
+
+  function touch(field: string) {
+    setTouched(t => ({ ...t, [field]: true }));
+  }
+
+  const liveErrors = Object.keys(touched).length > 0 ? validate() : {};
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Implementation placeholder
-    console.log("Signup submitted:", { name, email, password });
+    const allTouched = { fullName: true, email: true, password: true, country: true, defaultCurrency: true };
+    setTouched(allTouched);
+    const errs = validate();
+    setFormErrors(errs);
+    if (Object.keys(errs).length) return;
+
+    setLoading(true);
+
+    try {
+      const payload: Record<string, string> = {
+        fullName: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        password,
+        country: country.trim().toUpperCase(),
+        defaultCurrency: defaultCurrency.trim().toUpperCase(),
+      };
+      if (invitationToken) {
+        payload.invitationToken = invitationToken;
+      }
+
+      const res = await fetch(`${BASE_URL}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body?.error?.message ?? body?.message ?? `Error ${res.status}`);
+      }
+
+      const regData = body.data;
+      if (regData?.token) {
+        setToken(regData.token);
+        if (regData.user) {
+          setUser(regData.user);
+        }
+        toast.success("Account created successfully!");
+        router.replace(redirectTo);
+        return;
+      }
+
+      // Auto-login fallback if register returns user without token
+      const loginRes = await fetch(`${BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      });
+      const loginBody = await loginRes.json();
+      if (!loginRes.ok) {
+        router.push(`/login?registered=1&email=${encodeURIComponent(email)}`);
+        return;
+      }
+      setToken(loginBody.data?.token ?? loginBody.token);
+      const loggedUser = loginBody.data?.user ?? loginBody.user;
+      if (loggedUser) {
+        setUser(loggedUser);
+      }
+      toast.success("Account created successfully!");
+      router.replace(redirectTo);
+    } catch (err) {
+      toast.error(err, "Registration failed. Please check your information and try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div style={{ width: "100%", animation: "fadeIn 0.4s ease" }}>
+
       {/* Mobile back link */}
       <div style={{ marginBottom: 40 }} className="mobile-only">
         <Link href="/" style={{ fontSize: 13, color: "#888", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -25,35 +154,28 @@ export default function SignupPage() {
         </Link>
       </div>
 
-      <div style={{ marginBottom: 40 }}>
+      <div style={{ marginBottom: 36 }}>
         <h1 style={{ fontSize: "clamp(24px, 3vw, 32px)", fontWeight: 400, letterSpacing: "-0.03em", color: "#0A0A0A", marginBottom: 8 }}>
           Create an account
         </h1>
         <p style={{ fontSize: 14, color: "#666", lineHeight: 1.6 }}>
-          Join Splitpay to start managing collaborative payments and splits effortlessly.
+          Join Splitpay to start managing collaborative payments and splits.
         </p>
       </div>
 
       {/* Social Signup */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
-        <button type="button" style={{
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-          width: "100%", padding: "12px", borderRadius: "12px",
-          background: "#fff", border: "1px solid #E5E5E5",
-          fontSize: 14, fontWeight: 500, color: "#0A0A0A", cursor: "pointer",
-          transition: "background 140ms, border-color 140ms",
-        }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#F9F9F9"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#fff"; }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          Continue with Google
-        </button>
+        <GoogleAuthButton
+          text="signup_with"
+          invitationToken={invitationToken}
+          onSuccess={() => {
+            toast.success("Signed in with Google!");
+            router.replace(redirectTo);
+          }}
+          onError={() => {
+            // Handled via toast inside GoogleAuthButton
+          }}
+        />
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
@@ -63,150 +185,216 @@ export default function SignupPage() {
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        
-        {/* Full Name Input */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label htmlFor="name" style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>
-            Full name
-          </label>
+
+        {/* Full name */}
+        <Field label="Full name" htmlFor="fullName" error={formErrors.fullName || liveErrors.fullName}>
           <input
-            id="name"
+            id="fullName"
             type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
+            value={fullName}
+            onChange={e => setFullName(e.target.value)}
+            onBlur={() => touch("fullName")}
             placeholder="Jane Doe"
             required
-            style={{
-              width: "100%", padding: "14px 16px", borderRadius: "12px",
-              border: "1px solid #E5E5E5", background: "#fff",
-              fontSize: 14, color: "#0A0A0A", outline: "none",
-              transition: "border-color 140ms, box-shadow 140ms",
-            }}
-            onFocus={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#0A0A0A";
-              (e.currentTarget as HTMLElement).style.boxShadow = "0 0 0 1px #0A0A0A";
-            }}
-            onBlur={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#E5E5E5";
-              (e.currentTarget as HTMLElement).style.boxShadow = "none";
-            }}
+            disabled={loading}
+            autoComplete="name"
+            style={fieldInput(Boolean(formErrors.fullName || liveErrors.fullName))}
+            onFocus={e => focusRing(e, Boolean(formErrors.fullName || liveErrors.fullName))}
           />
-        </div>
+        </Field>
 
-        {/* Email Input */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label htmlFor="email" style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>
-            Email address
-          </label>
+        {/* Email */}
+        <Field label="Email address" htmlFor="email" error={formErrors.email || liveErrors.email}>
           <input
             id="email"
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
+            onBlur={() => touch("email")}
             placeholder="name@example.com"
             required
-            style={{
-              width: "100%", padding: "14px 16px", borderRadius: "12px",
-              border: "1px solid #E5E5E5", background: "#fff",
-              fontSize: 14, color: "#0A0A0A", outline: "none",
-              transition: "border-color 140ms, box-shadow 140ms",
-            }}
-            onFocus={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#0A0A0A";
-              (e.currentTarget as HTMLElement).style.boxShadow = "0 0 0 1px #0A0A0A";
-            }}
-            onBlur={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#E5E5E5";
-              (e.currentTarget as HTMLElement).style.boxShadow = "none";
-            }}
+            disabled={loading}
+            autoComplete="email"
+            style={fieldInput(Boolean(formErrors.email || liveErrors.email))}
+            onFocus={e => focusRing(e, Boolean(formErrors.email || liveErrors.email))}
           />
-        </div>
+        </Field>
 
-        {/* Password Input */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label htmlFor="password" style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Create a strong password"
-            required
-            
-            style={{
-              width: "100%", padding: "14px 16px", borderRadius: "12px",
-              border: "1px solid #E5E5E5", background: "#fff",
-              fontSize: 14, color: "#0A0A0A", outline: "none",
-              transition: "border-color 140ms, box-shadow 140ms",
-            }}
-            onFocus={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#0A0A0A";
-              (e.currentTarget as HTMLElement).style.boxShadow = "0 0 0 1px #0A0A0A";
-            }}
-            onBlur={e => {
-              (e.currentTarget as HTMLElement).style.borderColor = "#E5E5E5";
-              (e.currentTarget as HTMLElement).style.boxShadow = "none";
-            }}
-          />
-        </div>
-
-        {/* Submit Button */}
-        <button type="submit" style={{
-          width: "100%", padding: "14px", borderRadius: "100px",
-          background: "#0A0A0A", color: "#fff", border: "none",
-          fontSize: 14, fontWeight: 500, cursor: "pointer",
-          marginTop: 8, transition: "background 140ms, transform 140ms",
-        }}
-          onMouseEnter={e => {
-            (e.currentTarget as HTMLElement).style.background = "#222";
-            (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLElement).style.background = "#0A0A0A";
-            (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-          }}
-        >
-         {loading ? (
-            <svg
-              style={{ animation: "spin 1s linear infinite", display: "inline-block", verticalAlign: "middle" }}
-              width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        {/* Password */}
+        <Field label="Password" htmlFor="password" hint="At least 8 characters" error={formErrors.password || liveErrors.password}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onBlur={() => touch("password")}
+              placeholder="••••••••"
+              required
+              disabled={loading}
+              autoComplete="new-password"
+              style={{ ...fieldInput(Boolean(formErrors.password || liveErrors.password)), paddingRight: "44px" }}
+              onFocus={e => focusRing(e, Boolean(formErrors.password || liveErrors.password))}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute", right: 12,
+                background: "transparent", border: "none", cursor: "pointer",
+                padding: "6px", display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#777", borderRadius: "6px", transition: "color 140ms",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#0A0A0A"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#777"; }}
             >
-              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
+        </Field>
+
+        {/* Country & Currency row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Country" htmlFor="country" hint="2 letters" error={formErrors.country || liveErrors.country}>
+            <input
+              id="country"
+              type="text"
+              maxLength={2}
+              value={country}
+              onChange={e => setCountry(e.target.value.toUpperCase())}
+              onBlur={() => touch("country")}
+              placeholder="NG"
+              required
+              disabled={loading}
+              style={fieldInput(Boolean(formErrors.country || liveErrors.country))}
+              onFocus={e => focusRing(e, Boolean(formErrors.country || liveErrors.country))}
+            />
+          </Field>
+          <Field label="Currency" htmlFor="defaultCurrency" hint="3 letters" error={formErrors.defaultCurrency || liveErrors.defaultCurrency}>
+            <input
+              id="defaultCurrency"
+              type="text"
+              maxLength={3}
+              value={defaultCurrency}
+              onChange={e => setDefaultCurrency(e.target.value.toUpperCase())}
+              onBlur={() => touch("defaultCurrency")}
+              placeholder="NGN"
+              required
+              disabled={loading}
+              style={fieldInput(Boolean(formErrors.defaultCurrency || liveErrors.defaultCurrency))}
+              onFocus={e => focusRing(e, Boolean(formErrors.defaultCurrency || liveErrors.defaultCurrency))}
+            />
+          </Field>
+        </div>
+
+        {/* Invitation notice if token present */}
+        {invitationToken && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "10px 14px", borderRadius: 10,
+            background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)",
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
             </svg>
-          ) : "Create account"}
+            <span style={{ fontSize: 13, color: "#15803D" }}>Pool invitation detected — you will join automatically after sign up.</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            width: "100%", padding: "14px", borderRadius: "100px",
+            background: loading ? "#555" : "#0A0A0A", color: "#fff", border: "none",
+            fontSize: 14, fontWeight: 500,
+            cursor: loading ? "not-allowed" : "pointer",
+            marginTop: 8, transition: "background 140ms",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}
+          onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = "#222"; }}
+          onMouseLeave={e => { if (!loading) (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+        >
+          {loading ? <><Spinner /> Creating account…</> : "Create account"}
         </button>
 
       </form>
 
-      <div style={{ marginTop: 32, textAlign: "center", fontSize: 14, color: "#666", lineHeight: 1.6 }}>
-        By continuing, you agree to Splitpay's{" "}
+      <div style={{ marginTop: 24, textAlign: "center", fontSize: 13, color: "#777", lineHeight: 1.6 }}>
+        By continuing, you agree to Splitpay&apos;s{" "}
         <Link href="/terms" style={{ color: "#0A0A0A", textDecoration: "underline", textUnderlineOffset: 2 }}>Terms of Service</Link>
         {" "}and{" "}
         <Link href="/privacy" style={{ color: "#0A0A0A", textDecoration: "underline", textUnderlineOffset: 2 }}>Privacy Policy</Link>.
       </div>
 
-      <div style={{ marginTop: 32, textAlign: "center", fontSize: 14, color: "#666" }}>
+      <div style={{ marginTop: 24, textAlign: "center", fontSize: 14, color: "#666" }}>
         Already have an account?{" "}
-        <Link href="/login" style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>
-          Log in
-        </Link>
+        <Link href={`/login${redirectTo !== "/dashboard" ? `?redirect=${encodeURIComponent(redirectTo)}` : ""}`} style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>Log in</Link>
       </div>
 
       <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @media (min-width: 901px) {
-          .mobile-only { display: none !important; }
-        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (min-width: 901px) { .mobile-only { display: none !important; } }
       `}</style>
     </div>
+  );
+}
+
+function Field({ label, htmlFor, hint, error, children }: { label: string; htmlFor?: string; hint?: string; error?: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <label htmlFor={htmlFor} style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A" }}>{label}</label>
+        {hint && <span style={{ fontSize: 11, color: "#bbb" }}>{hint}</span>}
+      </div>
+      {children}
+      {error && <p style={{ fontSize: 12, color: "#DC2626" }}>{error}</p>}
+    </div>
+  );
+}
+
+function fieldInput(hasError: boolean): React.CSSProperties {
+  return {
+    width: "100%", boxSizing: "border-box",
+    padding: "13px 16px", borderRadius: "12px",
+    border: `1px solid ${hasError ? "rgba(220,38,38,0.5)" : "#E5E5E5"}`,
+    background: "#fff", fontSize: 14, color: "#0A0A0A", outline: "none",
+    transition: "border-color 140ms, box-shadow 140ms",
+    fontFamily: "var(--font-outfit)",
+  };
+}
+
+function focusRing(e: React.FocusEvent<HTMLElement>, hasError: boolean) {
+  e.currentTarget.style.borderColor = hasError ? "rgba(220,38,38,0.7)" : "#0A0A0A";
+  e.currentTarget.style.boxShadow = hasError ? "0 0 0 2px rgba(220,38,38,0.12)" : "0 0 0 1px #0A0A0A";
+}
+
+function Spinner() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: "spin 0.7s linear infinite" }}>
+      <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/>
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
   );
 }

@@ -39,3 +39,51 @@ export async function updateProject(ownerId: string, projectId: string, dto: Upd
   });
   return updated;
 }
+
+export async function getProjectBalanceSummary(projectId: string) {
+  const account = await prisma.projectAccount.findUnique({
+    where: { projectId },
+  });
+
+  const payouts = await prisma.payoutTransaction.findMany({
+    where: { payment: { projectId } },
+    include: { collaborator: true },
+  });
+
+  const memberBalances: Record<string, { role: string; allocated: number; withdrawn: number; available: number }> = {};
+
+  for (const payout of payouts) {
+    const cid = payout.collaboratorId;
+    if (!memberBalances[cid]) {
+      memberBalances[cid] = {
+        role: payout.collaborator.role,
+        allocated: 0,
+        withdrawn: 0,
+        available: 0,
+      };
+    }
+    const amt = Number(payout.amount);
+    memberBalances[cid].allocated += amt;
+    if (payout.status === 'SUCCESSFUL') {
+      memberBalances[cid].withdrawn += amt;
+    }
+    memberBalances[cid].available = memberBalances[cid].allocated - memberBalances[cid].withdrawn;
+  }
+
+  return {
+    projectId,
+    totalReceived: account ? Number(account.totalReceived) : 0,
+    totalDisbursed: account ? Number(account.totalDisbursed) : 0,
+    currentBalance: account ? Number(account.currentBalance) : 0,
+    currency: account?.currency || 'USD',
+    collaboratorBreakdown: memberBalances,
+  };
+}
+
+export async function getProjectAllocations(projectId: string) {
+  return prisma.splitSnapshot.findMany({
+    where: { projectId },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+

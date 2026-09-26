@@ -1,38 +1,57 @@
 import { Response, NextFunction } from 'express';
-import * as collaboratorService from './service';
 import { AuthenticatedRequest } from '../../middleware/auth';
+import * as collaboratorService from './service';
 
-export async function addCollaborator(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+/**
+ * POST /collaborators
+ * Body: { projectId, invitedEmail, role, splitPercentage }
+ */
+export async function createCollaborator(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const collaborator = await collaboratorService.addCollaborator(req.body);
-    res.status(201).json({ data: collaborator });
+    const userId = req.user!.id;
+    const result = await collaboratorService.createInvitation(userId, req.body);
+    res.status(201).json({ data: result });
   } catch (err) {
     next(err);
   }
 }
 
-export async function getCollaborators(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+/**
+ * GET /collaborators/project/:projectId
+ */
+export async function getProjectCollaborators(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const collaborators = await collaboratorService.getProjectCollaborators(req.params.projectId as string);
-    res.status(200).json({ data: collaborators });
+    const { projectId } = req.params;
+    const result = await collaboratorService.getProjectCollaborators(projectId as string, req.user!.id);
+    res.status(200).json({ data: result });
   } catch (err) {
     next(err);
   }
 }
 
-export async function updateCollaborator(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
-  try {
-    const collaborator = await collaboratorService.updateCollaborator(req.params.id as string, req.body);
-    res.status(200).json({ data: collaborator });
-  } catch (err) {
-    next(err);
-  }
-}
-
+/**
+ * DELETE /collaborators/:id
+ * Revokes an invitation or removes a pool member.
+ */
 export async function removeCollaborator(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    await collaboratorService.removeCollaborator(req.params.id as string);
+    const userId = req.user!.id;
+    await collaboratorService.removeCollaborator(req.params.id as string, userId);
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * POST /collaborators/leave/:poolId
+ * Allows a collaborator to leave a pool.
+ */
+export async function leavePool(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    await collaboratorService.leavePool(req.params.poolId as string, userId);
+    res.status(200).json({ message: 'Successfully left the pool' });
   } catch (err) {
     next(err);
   }

@@ -37,3 +37,22 @@ export async function updateProject(req: AuthenticatedRequest, res: Response, ne
     next(err);
   }
 }
+
+export async function getProjectBalance(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const summary = await projectService.getProjectBalanceSummary(req.params.id as string);
+    res.status(200).json({ data: summary });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getProjectAllocations(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const allocations = await projectService.getProjectAllocations(req.params.id as string);
+    res.status(200).json({ data: allocations });
+  } catch (err) {
+    next(err);
+  }
+}
+

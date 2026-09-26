@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Outfit, Playfair_Display, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
+import { ToastProvider } from "@/app/components/Toast";
 
 const outfit = Outfit({
   variable: "--font-outfit",
@@ -37,7 +39,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${outfit.variable} ${playfair.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ToastProvider>
+          {children}
+        </ToastProvider>
+        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
+      </body>
     </html>
   );
 }
+
