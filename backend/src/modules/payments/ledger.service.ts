@@ -1,4 +1,4 @@
-import { prisma } from '../../lib/prisma';
+'import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { verifyPaystackTransaction } from '../../lib/paystack';
 import { PaymentStatus } from '@prisma/client';
