@@ -5,9 +5,9 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/server.js",
-    "prisma:generate": "pnpm exec prisma generate",
+    "prisma:generate": "prisma generate",
     "prisma:migrate": "pnpm exec prisma migrate dev",
     "prisma:studio": "pnpm exec prisma studio",
     "test": "tsx --test tests/**/*.test.ts"
