@@ -55,9 +55,12 @@ interface InviteCode {
 export default function MembersPage({ params }: Props) {
   const { poolId } = use(params);
 
-  const [pageState, setPageState] = useState<PageState>("loading");
-  const [pool, setPool] = useState<Pool | null>(null);
-  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const cachedPool = api.getCached<Pool>(`/projects/${poolId}`) || api.getCached<Pool>(`/pools/${poolId}`);
+  const cachedCollabs = api.getCached<Collaborator[]>(`/collaborators/project/${poolId}`);
+
+  const [pageState, setPageState] = useState<PageState>(cachedPool ? "ready" : "loading");
+  const [pool, setPool] = useState<Pool | null>(cachedPool ?? null);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>(cachedCollabs ?? []);
   const [errorMsg, setErrorMsg] = useState("");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
@@ -101,31 +104,30 @@ export default function MembersPage({ params }: Props) {
   const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
 
   useEffect(() => {
-    load();
+    load(Boolean(cachedPool));
   }, [poolId]);
 
-  async function load() {
-    setPageState("loading");
+  async function load(silent = false) {
+    if (!silent) setPageState("loading");
     try {
-      const [poolData, collabData] = await Promise.all([
+      const [poolData, collabData, codeData] = await Promise.all([
         api.get<Pool>(`/projects/${poolId}`),
         api.get<Collaborator[]>(`/collaborators/project/${poolId}`).catch(() => [] as Collaborator[]),
+        api.get<InviteCode | null>(`/collaborators/project/${poolId}/code`).catch(() => null),
       ]);
       setPool(poolData);
-      const list = Array.isArray(collabData) ? collabData : [];
+      const list = Array.isArray(collabData) ? collabData.filter(c => c.invitedEmail || c.userId) : [];
       setCollaborators(list);
 
-      // Check if there is an active invite code in the collaborators list
-      const codeItem = list.find((c: any) => c.status === "INVITED" && !c.invitedEmail);
-      if (codeItem) {
-        setInviteCode({ code: (codeItem as any).code || codeItem.id });
+      if (codeData && codeData.code) {
+        setInviteCode({ code: codeData.code, expiresAt: codeData.expiresAt });
       }
 
       setPageState("ready");
     } catch (err) {
       if (err instanceof ApiError) setErrorStatus(err.status);
       setErrorMsg(err instanceof Error ? err.message : "Failed to load.");
-      setPageState("error");
+      if (!silent) setPageState("error");
     }
   }
 
@@ -338,13 +340,7 @@ export default function MembersPage({ params }: Props) {
                   Invite by email
                 </button>
                 <button
-                  onClick={() => {
-                    if (!inviteCode) {
-                      handleGenerateCode();
-                    } else {
-                      setShowCodeSection(s => !s);
-                    }
-                  }}
+                  onClick={() => setShowCodeSection(s => !s)}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 7,
                     padding: "9px 18px", borderRadius: 100,

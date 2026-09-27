@@ -72,7 +72,31 @@ export function getSynchronousCache<T>(path: string): T | null {
     return storageEntry.data;
   }
 
+  // Cross-alias lookup between /projects/ and /pools/
+  if (path.startsWith("/projects/")) {
+    const aliasKey = path.replace("/projects/", "/pools/");
+    const aliasMem = memoryCache.get(aliasKey) as CacheEntry<T> | undefined;
+    if (aliasMem) return aliasMem.data;
+    const aliasStorage = getFromStorage<T>(getCacheKey(aliasKey));
+    if (aliasStorage) return aliasStorage.data;
+  } else if (path.startsWith("/pools/")) {
+    const aliasKey = path.replace("/pools/", "/projects/");
+    const aliasMem = memoryCache.get(aliasKey) as CacheEntry<T> | undefined;
+    if (aliasMem) return aliasMem.data;
+    const aliasStorage = getFromStorage<T>(getCacheKey(aliasKey));
+    if (aliasStorage) return aliasStorage.data;
+  }
+
   return null;
+}
+
+/**
+ * Manually seed or update cache for a path.
+ */
+export function setSynchronousCache<T>(path: string, data: T, ttl: number = DEFAULT_TTL): void {
+  const entry: CacheEntry<T> = { data, timestamp: Date.now(), ttl };
+  memoryCache.set(path, entry as CacheEntry<unknown>);
+  setToStorage(getCacheKey(path), entry);
 }
 
 /**
@@ -112,6 +136,16 @@ export function invalidateApiCache(pattern?: string | RegExp): void {
       });
     } catch {}
   }
+}
+
+function resolveMutationScope(path: string): string | RegExp | undefined {
+  if (path.includes("/collaborators")) return /collaborator|split|pool|project/;
+  if (path.includes("/splits") || path.includes("/split")) return /split|pool|project|collaborator/;
+  if (path.includes("/payments") || path.includes("/transactions")) return /payment|transaction|balance|pool|project/;
+  if (path.includes("/withdrawals")) return /withdrawal|balance|pool|project/;
+  if (path.includes("/pools") || path.includes("/projects")) return /pool|project/;
+  if (path.includes("/notifications")) return /notification/;
+  return undefined;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -161,36 +195,61 @@ export const api = {
     // Fetch fresh data
     const data = await request<T>(path);
     const entry: CacheEntry<T> = { data, timestamp: Date.now(), ttl };
-    memoryCache.set(memKey, entry);
+    memoryCache.set(memKey, entry as CacheEntry<unknown>);
     setToStorage(storageKey, entry);
+
+    // If fetching pools list, automatically pre-seed individual pool cache
+    if ((path === "/pools" || path === "/projects") && Array.isArray(data)) {
+      data.forEach((p: any) => {
+        if (p && p.id) {
+          setSynchronousCache(`/projects/${p.id}`, p, ttl);
+          setSynchronousCache(`/pools/${p.id}`, p, ttl);
+        }
+      });
+    }
 
     return data;
   },
 
   getCached: <T>(path: string): T | null => getSynchronousCache<T>(path),
+  setCached: <T>(path: string, data: T, ttl?: number): void => setSynchronousCache<T>(path, data, ttl),
 
   post: async <T>(path: string, body: unknown): Promise<T> => {
     const data = await request<T>(path, { method: "POST", body: JSON.stringify(body) });
-    invalidateApiCache(); // Invalidate GET cache on mutation
+    const scope = resolveMutationScope(path);
+    invalidateApiCache(scope);
     return data;
   },
 
   patch: async <T>(path: string, body: unknown): Promise<T> => {
     const data = await request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
-    invalidateApiCache(); // Invalidate GET cache on mutation
+    const scope = resolveMutationScope(path);
+    invalidateApiCache(scope);
     return data;
   },
 
   delete: async <T>(path: string): Promise<T> => {
     const data = await request<T>(path, { method: "DELETE" });
-    invalidateApiCache(); // Invalidate GET cache on mutation
+    const scope = resolveMutationScope(path);
+    invalidateApiCache(scope);
     return data;
   },
 
   invalidateCache: (pattern?: string | RegExp) => invalidateApiCache(pattern),
 
   getMe: (options?: FetchOptions) => api.get<any>("/users/me", options),
-  getPools: (options?: FetchOptions) => api.get<any>("/pools", options),
+  getPools: async (options?: FetchOptions) => {
+    const data = await api.get<any>("/pools", options);
+    if (Array.isArray(data)) {
+      data.forEach((p: any) => {
+        if (p && p.id) {
+          setSynchronousCache(`/projects/${p.id}`, p);
+          setSynchronousCache(`/pools/${p.id}`, p);
+        }
+      });
+    }
+    return data;
+  },
   getNotifications: (options?: FetchOptions) => api.get<any>("/notifications", options),
 
   googleAuth: async (credential: string, invitationToken?: string) => {

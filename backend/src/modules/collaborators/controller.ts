@@ -30,6 +30,19 @@ export async function getProjectCollaborators(req: AuthenticatedRequest, res: Re
 }
 
 /**
+ * GET /collaborators/project/:projectId/code
+ */
+export async function getProjectInviteCode(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { projectId } = req.params;
+    const result = await collaboratorService.getProjectInviteCode(projectId as string, req.user!.id);
+    res.status(200).json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * DELETE /collaborators/:id
  * Revokes an invitation or removes a pool member.
  */

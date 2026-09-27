@@ -16,18 +16,41 @@ export interface CreateInvitationDto {
 }
 
 async function persistMemberSplit(poolId: string, memberOrTokenId: string, percentage: number): Promise<void> {
-  const existingConfig = await prisma.splitConfiguration.findFirst({
-    where: { poolId },
-  });
+  const [existingConfig, pool] = await Promise.all([
+    prisma.splitConfiguration.findFirst({ where: { poolId }, orderBy: { updatedAt: 'desc' } }),
+    prisma.pool.findUnique({
+      where: { id: poolId },
+      include: { members: { where: { role: PoolRole.OWNER } } },
+    }),
+  ]);
+
+  const ownerMember = pool?.members[0];
 
   let currentShares: { memberId: string; percentage: number }[] = [];
   if (existingConfig && Array.isArray(existingConfig.configuration)) {
     currentShares = (existingConfig.configuration as any[]).filter(
-      (s: any) => s && s.memberId !== memberOrTokenId,
+      (s: any) => s && s.memberId && s.memberId !== memberOrTokenId,
     );
   }
 
+  // Add or update the target member/invitation share
   currentShares.push({ memberId: memberOrTokenId, percentage });
+
+  // If owner member exists and is not explicitly in currentShares, or if we need to balance the owner
+  if (ownerMember && ownerMember.id !== memberOrTokenId) {
+    const ownerIndex = currentShares.findIndex((s) => s.memberId === ownerMember.id || s.memberId === ownerMember.userId);
+    const nonOwnerSum = currentShares
+      .filter((s) => s.memberId !== ownerMember.id && s.memberId !== ownerMember.userId)
+      .reduce((sum, s) => sum + Number(s.percentage), 0);
+
+    const remainingForOwner = Math.max(0, Math.round((100 - nonOwnerSum) * 100) / 100);
+
+    if (ownerIndex >= 0) {
+      currentShares[ownerIndex].percentage = remainingForOwner;
+    } else {
+      currentShares.unshift({ memberId: ownerMember.id, percentage: remainingForOwner });
+    }
+  }
 
   if (existingConfig) {
     await prisma.splitConfiguration.update({
@@ -285,7 +308,12 @@ export async function getProjectCollaborators(poolId: string, actorId: string) {
 
   const [invitations, members, splitConfig] = await Promise.all([
     prisma.poolInvitation.findMany({
-      where: { poolId, status: { in: [InvitationStatus.PENDING, InvitationStatus.ACCEPTED] } },
+      where: {
+        poolId,
+        type: InvitationType.EMAIL,
+        email: { not: null },
+        status: { in: [InvitationStatus.PENDING, InvitationStatus.ACCEPTED] },
+      },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.poolMember.findMany({
@@ -311,7 +339,7 @@ export async function getProjectCollaborators(poolId: string, actorId: string) {
     }
   }
 
-  // Map invitations to collaborator shape
+  // Map invitations to collaborator shape (only email invitations)
   const invitationCollabs = invitations.map((inv) => {
     let pct = shareMap.get(inv.token) ?? shareMap.get(inv.id) ?? (inv.code ? shareMap.get(inv.code) : undefined);
     if (pct === undefined) {
@@ -346,7 +374,7 @@ export async function getProjectCollaborators(poolId: string, actorId: string) {
       }
     }
     if (pct === undefined) {
-      pct = splitConfig?.type === 'CUSTOM' ? 0 : defaultEqualShare;
+      pct = splitConfig?.type === 'CUSTOM' ? (members.length === 1 ? 100 : 0) : defaultEqualShare;
     }
 
     return {
@@ -362,12 +390,50 @@ export async function getProjectCollaborators(poolId: string, actorId: string) {
   });
 
   // Merge: confirmed members take precedence over their invitations
-  const confirmedEmails = new Set(memberCollabs.map((m) => m.invitedEmail?.toLowerCase()));
+  const confirmedEmails = new Set(memberCollabs.map((m) => m.invitedEmail?.toLowerCase()).filter(Boolean));
   const pendingOnly = invitationCollabs.filter(
-    (inv) => !inv.invitedEmail || !confirmedEmails.has(inv.invitedEmail.toLowerCase()),
+    (inv) => inv.invitedEmail && !confirmedEmails.has(inv.invitedEmail.toLowerCase()),
   );
 
   return [...memberCollabs, ...pendingOnly];
+}
+
+/**
+ * Get active invite code for a pool.
+ */
+export async function getProjectInviteCode(poolId: string, actorId: string) {
+  const [pool, membership] = await Promise.all([
+    prisma.pool.findUnique({
+      where: { id: poolId },
+      select: { ownerId: true },
+    }),
+    prisma.poolMember.findUnique({
+      where: {
+        poolId_userId: {
+          poolId,
+          userId: actorId,
+        },
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
+  if (pool.ownerId !== actorId && !membership) {
+    throw new AppError(403, 'You do not have access to this Pool', 'FORBIDDEN');
+  }
+
+  const codeInvite = await prisma.poolInvitation.findFirst({
+    where: {
+      poolId,
+      type: InvitationType.CODE,
+      status: InvitationStatus.PENDING,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return codeInvite ? { code: codeInvite.code || codeInvite.token, expiresAt: codeInvite.expiresAt } : null;
 }
 
 /**
