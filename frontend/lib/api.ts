@@ -134,7 +134,7 @@ class ApiClient {
   }
 
   // Pools
-  async getPools(): Promise<PoolResponse[]> {
+  async getPools(options?: any): Promise<PoolResponse[]> {
     return this.request<PoolResponse[]>('/pools');
   }
 

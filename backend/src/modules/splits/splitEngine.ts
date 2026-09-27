@@ -1,4 +1,9 @@
 import { SplitType } from '@prisma/client';
+import {
+  calculatePaystackProviderFee,
+  executeFinancialChain,
+  DEFAULT_PAYSTACK_NGN_CONFIG,
+} from './feeEngine';
 
 export interface MemberPercentage {
   memberId: string;
@@ -20,14 +25,13 @@ export interface SplitCalculationResult {
 }
 
 /**
- * Calculates platform/processing fee.
- * Default: 1.5% capped at NGN 2,000 / $50 equivalent.
+ * Calculates Paystack collection fee for Nigerian local transactions.
+ * 1.5% + ₦100 (flat ₦100 waived for transactions below ₦2,500, capped at ₦2,000).
  */
 export function calculateProcessingFee(totalAmountMajor: number): number {
-  const percentageFee = totalAmountMajor * 0.015;
-  const cappedFee = Math.min(percentageFee, 2000);
-  // Round fee to 2 decimal places
-  return Math.round(cappedFee * 100) / 100;
+  const grossMinor = Math.round(totalAmountMajor * 100);
+  const feeMinor = calculatePaystackProviderFee(grossMinor, DEFAULT_PAYSTACK_NGN_CONFIG);
+  return feeMinor / 100;
 }
 
 /**
@@ -49,75 +53,45 @@ export function calculateAllocations({
     throw new Error('At least one member is required to calculate splits');
   }
 
-  const fee = feeAmountMajor ?? calculateProcessingFee(totalAmountMajor);
-  const distributableMajor = Math.max(0, totalAmountMajor - fee);
-  const distributableMinor = Math.round(distributableMajor * 100);
+  const grossMinor = Math.round(totalAmountMajor * 100);
+  const feeMinor =
+    feeAmountMajor !== undefined
+      ? Math.round(feeAmountMajor * 100)
+      : calculatePaystackProviderFee(grossMinor, DEFAULT_PAYSTACK_NGN_CONFIG);
 
-  const allocations: CalculatedAllocation[] = [];
-
-  if (splitType === SplitType.EQUAL) {
-    const memberCount = members.length;
-    const baseShareMinor = Math.floor(distributableMinor / memberCount);
-    let remainderMinor = distributableMinor % memberCount;
-
-    const equalPercentage = Math.round((100 / memberCount) * 100) / 100;
-
-    for (let i = 0; i < memberCount; i++) {
-      let memberShareMinor = baseShareMinor;
-      if (remainderMinor > 0) {
-        memberShareMinor += 1;
-        remainderMinor -= 1;
-      }
-
-      allocations.push({
-        memberId: members[i].memberId,
-        percentage: equalPercentage,
-        amountMinor: memberShareMinor,
-        amount: Math.round(memberShareMinor) / 100,
-      });
-    }
-  } else if (splitType === SplitType.CUSTOM) {
-    // Validate percentages sum to exactly 100% (within 0.01 tolerance)
+  // Validate percentages if custom
+  if (splitType === SplitType.CUSTOM) {
     const totalPercentage = members.reduce((sum, m) => sum + (m.percentage || 0), 0);
     if (Math.abs(totalPercentage - 100) > 0.01) {
       throw new Error(`Custom split percentages must sum to 100%. Current sum: ${totalPercentage}%`);
     }
-
-    let allocatedSumMinor = 0;
-
-    for (const m of members) {
-      const pct = m.percentage || 0;
-      // Calculate share in minor units
-      const shareMinor = Math.round((distributableMinor * pct) / 100);
-      allocatedSumMinor += shareMinor;
-
-      allocations.push({
-        memberId: m.memberId,
-        percentage: pct,
-        amountMinor: shareMinor,
-        amount: Math.round(shareMinor) / 100,
-      });
-    }
-
-    // Distribute any single minor unit rounding difference to the largest shareholder
-    const difference = distributableMinor - allocatedSumMinor;
-    if (difference !== 0 && allocations.length > 0) {
-      // Find allocation with highest percentage
-      let highestIndex = 0;
-      for (let i = 1; i < allocations.length; i++) {
-        if (allocations[i].percentage > allocations[highestIndex].percentage) {
-          highestIndex = i;
-        }
-      }
-      allocations[highestIndex].amountMinor += difference;
-      allocations[highestIndex].amount = Math.round(allocations[highestIndex].amountMinor) / 100;
-    }
   }
+
+  const equalPercentage = members.length > 0 ? Math.round((100 / members.length) * 100) / 100 : 0;
+
+  const collaborators = members.map((m) => ({
+    id: m.memberId,
+    userId: null,
+    role: 'MEMBER',
+    splitPercentage: splitType === SplitType.CUSTOM ? (m.percentage || 0) : equalPercentage,
+  }));
+
+  const chain = executeFinancialChain({
+    grossAmountMinor: grossMinor,
+    authoritativeProviderFeeMinor: feeMinor,
+    platformFeePercent: 0,
+    collaborators,
+  });
 
   return {
     totalAmount: totalAmountMajor,
-    feeAmount: fee,
-    distributableAmount: distributableMajor,
-    allocations,
+    feeAmount: chain.providerFee,
+    distributableAmount: chain.distributableAmount,
+    allocations: chain.collaboratorAllocations.map((a) => ({
+      memberId: a.collaboratorId,
+      percentage: a.splitPercentage,
+      amountMinor: a.amountMinor,
+      amount: a.amount,
+    })),
   };
 }

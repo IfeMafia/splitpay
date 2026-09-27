@@ -131,6 +131,16 @@ export interface SplitAllocationResponse {
 export interface PoolBalanceResponse {
   poolId: string;
   currency: string;
+  totalGrossReceived: number;
+  totalProviderFees: number;
+  totalPlatformFees: number;
+  totalTax: number;
+  totalDistributable: number;
+  totalAllocated: number;
+  totalWithdrawn: number;
+  totalPendingWithdrawals: number;
+  totalAvailable: number;
+  // Compatibility aliases
   totalReceived: number;
   distributableAmount: number;
   withdrawnAmount: number;
@@ -141,6 +151,7 @@ export interface PoolBalanceResponse {
     fullName: string;
     allocatedAmount: number;
     withdrawnAmount: number;
+    pendingWithdrawalAmount: number;
     availableBalance: number;
   }[];
 }
