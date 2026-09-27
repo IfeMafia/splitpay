@@ -2,8 +2,7 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { CreatePoolDto, UpdatePoolDto, AddMemberDto } from './validators';
 import { PoolResponse, PoolMemberResponse } from '../../contracts';
-import { PoolRole, PoolStatus, InvitationType, InvitationStatus } from '@prisma/client';
-import { generateCharToken } from '../../utils/token';
+import { PoolRole, PoolStatus } from '@prisma/client';
 
 export async function createPool(userId: string, dto: CreatePoolDto): Promise<PoolResponse> {
   const pool = await prisma.$transaction(async (tx) => {
@@ -23,21 +22,6 @@ export async function createPool(userId: string, dto: CreatePoolDto): Promise<Po
         poolId: newPool.id,
         userId,
         role: PoolRole.OWNER,
-      },
-    });
-
-    // Auto-generate a 3-character invite code for the new pool
-    const inviteCode = generateCharToken(3);
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    await tx.poolInvitation.create({
-      data: {
-        poolId: newPool.id,
-        inviterId: userId,
-        type: InvitationType.CODE,
-        code: inviteCode,
-        token: inviteCode,
-        status: InvitationStatus.PENDING,
-        expiresAt,
       },
     });
 
