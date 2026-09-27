@@ -3,6 +3,8 @@ import { verifyPaystackWebhookSignature } from '../../lib/paystack';
 import { confirmPaymentTransaction } from '../payments/ledger.service';
 import { AppError } from '../../middleware/errorHandler';
 import { Prisma, WithdrawalStatus } from '@prisma/client';
+import { sendEmail } from '../../lib/mailer';
+import { formatWithdrawalSuccessEmail } from '../../lib/emailTemplates';
 
 export interface WebhookPayloadDto {
   provider: string;
@@ -68,7 +70,7 @@ export async function processWebhookEvent(
               ...(transferCode ? [{ providerReference: transferCode }] : []),
             ],
           },
-          include: { poolMember: true },
+          include: { pool: true, poolMember: { include: { user: true } } },
         });
 
         if (withdrawal) {
@@ -105,6 +107,29 @@ export async function processWebhookEvent(
               },
             });
           });
+
+          // Send confirmation email
+          if (withdrawal.poolMember?.user?.email) {
+            try {
+              const emailContent = formatWithdrawalSuccessEmail({
+                userName: withdrawal.poolMember.user.fullName || withdrawal.poolMember.user.email,
+                poolName: withdrawal.pool.name,
+                amount: Number(withdrawal.amount),
+                currency: withdrawal.currency,
+                accountName: withdrawal.accountName || 'Bank Account',
+                accountNumber: withdrawal.accountNumber || '••••',
+                withdrawalId: withdrawal.id,
+              });
+              await sendEmail({
+                to: withdrawal.poolMember.user.email,
+                subject: emailContent.subject,
+                html: emailContent.html,
+                text: emailContent.text,
+              });
+            } catch (emailErr) {
+              console.error('[Mailer Error] Failed to send withdrawal success email:', emailErr);
+            }
+          }
         }
       } else if (dto.eventType === 'transfer.failed' || dto.eventType === 'transfer.reversed') {
         const reference = dto.rawPayload?.data?.reference;

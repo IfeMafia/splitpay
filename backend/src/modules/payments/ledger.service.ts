@@ -4,6 +4,13 @@ import { verifyPaystackTransaction } from '../../lib/paystack';
 import { PaymentStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { SplitType } from '@prisma/client';
+import { env } from '../../config/env';
+import { sendEmail } from '../../lib/mailer';
+import {
+  formatPaymentReceivedOwnerEmail,
+  formatPaymentAllocatedEmail,
+  formatPaymentReceiptClientEmail,
+} from '../../lib/emailTemplates';
 
 export interface FinancialChainBreakdown {
   grossAmount: number;
@@ -87,7 +94,15 @@ export async function confirmPaymentTransaction(
     where: { providerReference: reference },
     include: {
       paymentLink: true,
-      pool: { include: { members: { include: { user: true } } } },
+      pool: {
+        select: {
+          id: true,
+          name: true,
+          ownerId: true,
+          owner: { select: { id: true, email: true, fullName: true } },
+          members: { include: { user: true } },
+        },
+      },
       splitSnapshot: { include: { allocations: true } },
     },
   });
@@ -118,7 +133,14 @@ export async function confirmPaymentTransaction(
         id: transaction.id,
         status: 'SUCCESSFUL',
         actualAmount: Number(transaction.amount).toFixed(2),
+        currency: transaction.currency,
         paidAt: transaction.paidAt,
+        reference: transaction.providerReference,
+        poolName: transaction.pool.name,
+        description: transaction.paymentLink?.description || transaction.pool.name,
+        merchantName: transaction.pool.owner?.fullName || 'Verified Splitpay Merchant',
+        payerEmail: transaction.payerEmail,
+        channel: 'Paystack Gateway',
       },
       breakdown,
     };
@@ -238,6 +260,48 @@ export async function confirmPaymentTransaction(
       });
     }
 
+    // Notify pool owner that payment has been received
+    try {
+      const poolName = transaction.pool.name;
+      await tx.notification.create({
+        data: {
+          userId: transaction.pool.ownerId,
+          title: 'Payment received',
+          message: `A payment of ₦${breakdown.grossAmount.toLocaleString()} has been confirmed for "${poolName}".`,
+          type: 'PAYMENT_RECEIVED',
+          data: {
+            poolId: transaction.poolId,
+            transactionId: transaction.id,
+            grossAmount: breakdown.grossAmount,
+            reference,
+          },
+        },
+      });
+
+      // Notify collaborators with their respective allocation shares
+      for (const alloc of breakdown.collaboratorAllocations) {
+        if (alloc.userId && alloc.userId !== transaction.pool.ownerId) {
+          await tx.notification.create({
+            data: {
+              userId: alloc.userId,
+              title: 'Payment Allocated',
+              message: `You received ₦${alloc.amount.toLocaleString()} (${alloc.splitPercentage}%) from a confirmed payment in "${poolName}".`,
+              type: 'PAYMENT_ALLOCATED',
+              data: {
+                poolId: transaction.poolId,
+                transactionId: transaction.id,
+                amount: alloc.amount,
+                percentage: alloc.splitPercentage,
+                reference,
+              },
+            },
+          });
+        }
+      }
+    } catch {
+      // Notification failure must not abort the payment confirmation
+    }
+
     // Audit log
     await tx.auditLog.create({
       data: {
@@ -249,12 +313,90 @@ export async function confirmPaymentTransaction(
     });
   });
 
+  // 6. Asynchronous isolated email dispatch
+  try {
+    const poolName = transaction.pool.name;
+    const poolUrl = `${env.FRONTEND_URL}/dashboard/pools/${transaction.poolId}`;
+
+    // A. Email to Pool Owner
+    if (transaction.pool.owner?.email) {
+      const ownerEmail = formatPaymentReceivedOwnerEmail({
+        ownerName: transaction.pool.owner.fullName || transaction.pool.owner.email,
+        poolName,
+        amount: breakdown.grossAmount,
+        currency: transaction.currency,
+        reference,
+        paidAt: paystackData.paidAt || new Date(),
+        poolUrl,
+      });
+      await sendEmail({
+        to: transaction.pool.owner.email,
+        subject: ownerEmail.subject,
+        html: ownerEmail.html,
+        text: ownerEmail.text,
+      });
+    }
+
+    // B. Emails to Collaborators
+    for (const alloc of breakdown.collaboratorAllocations) {
+      if (alloc.userId && alloc.userId !== transaction.pool.ownerId) {
+        const memberUser = members.find((m) => m.id === alloc.collaboratorId || m.userId === alloc.userId)?.user;
+        if (memberUser?.email) {
+          const collabEmail = formatPaymentAllocatedEmail({
+            collaboratorName: memberUser.fullName || memberUser.email,
+            poolName,
+            grossAmount: breakdown.grossAmount,
+            splitPercentage: alloc.splitPercentage,
+            allocatedAmount: alloc.amount,
+            currency: transaction.currency,
+            reference,
+            poolUrl,
+          });
+          await sendEmail({
+            to: memberUser.email,
+            subject: collabEmail.subject,
+            html: collabEmail.html,
+            text: collabEmail.text,
+          });
+        }
+      }
+    }
+
+    // C. Payment Receipt Email to Paying Client
+    const clientEmail = paystackData.customerEmail || transaction.payerEmail;
+    if (clientEmail) {
+      const receiptEmail = formatPaymentReceiptClientEmail({
+        poolName,
+        description: transaction.paymentLink?.description || undefined,
+        amount: breakdown.grossAmount,
+        currency: transaction.currency,
+        reference,
+        paidAt: paystackData.paidAt || new Date(),
+      });
+      await sendEmail({
+        to: clientEmail,
+        subject: receiptEmail.subject,
+        html: receiptEmail.html,
+        text: receiptEmail.text,
+      });
+    }
+  } catch (emailErr) {
+    console.error('[Mailer Warning] Failed to dispatch transactional emails for payment confirmation:', emailErr);
+  }
+
   return {
     payment: {
       id: transaction.id,
       status: 'SUCCESSFUL',
       actualAmount: paystackData.amountInNaira.toFixed(2),
+      currency: transaction.currency,
       paidAt: paystackData.paidAt ?? new Date().toISOString(),
+      reference,
+      poolName: transaction.pool.name,
+      description: transaction.paymentLink?.description || transaction.pool.name,
+      merchantName: transaction.pool.owner?.fullName || 'Verified Splitpay Merchant',
+      payerEmail: paystackData.customerEmail || transaction.payerEmail,
+      channel: 'Paystack Gateway',
     },
     breakdown,
   };

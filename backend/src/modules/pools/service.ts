@@ -2,7 +2,7 @@ import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { CreatePoolDto, UpdatePoolDto, AddMemberDto } from './validators';
 import { PoolResponse, PoolMemberResponse } from '../../contracts';
-import { PoolRole, PoolStatus } from '@prisma/client';
+import { PoolRole, PoolStatus, PaymentStatus } from '@prisma/client';
 
 export async function createPool(userId: string, dto: CreatePoolDto): Promise<PoolResponse> {
   const pool = await prisma.$transaction(async (tx) => {
@@ -64,6 +64,14 @@ export async function getUserPools(userId: string): Promise<PoolResponse[]> {
       _count: {
         select: { members: true },
       },
+      members: {
+        where: { userId },
+        select: { role: true },
+      },
+      transactions: {
+        where: { status: PaymentStatus.SUCCESSFUL },
+        select: { amount: true },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -78,6 +86,8 @@ export async function getUserPools(userId: string): Promise<PoolResponse[]> {
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
     memberCount: p._count.members,
+    userRole: p.ownerId === userId ? 'OWNER' : (p.members[0]?.role || 'MEMBER'),
+    totalAmount: p.transactions.reduce((sum, tx) => sum + Number(tx.amount), 0),
   }));
 }
 
@@ -92,6 +102,10 @@ export async function getPoolById(poolId: string): Promise<PoolResponse> {
       },
       _count: {
         select: { members: true },
+      },
+      transactions: {
+        where: { status: PaymentStatus.SUCCESSFUL },
+        select: { amount: true },
       },
     },
   });
@@ -110,6 +124,7 @@ export async function getPoolById(poolId: string): Promise<PoolResponse> {
     createdAt: pool.createdAt,
     updatedAt: pool.updatedAt,
     memberCount: pool._count.members,
+    totalAmount: pool.transactions.reduce((sum, tx) => sum + Number(tx.amount), 0),
     members: pool.members.map((m) => ({
       id: m.id,
       poolId: m.poolId,

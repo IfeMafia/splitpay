@@ -69,6 +69,9 @@ export async function acceptInvitation(rawToken: string, userId: string) {
         { id: token },
       ],
     },
+    include: {
+      pool: true,
+    },
   });
 
   if (!invitation || invitation.status !== InvitationStatus.PENDING) {
@@ -147,15 +150,29 @@ export async function acceptInvitation(rawToken: string, userId: string) {
       }
     }
 
+    // Notify the member
     await tx.notification.create({
       data: {
         userId,
-        title: 'Invitation Accepted',
-        message: `You've joined the pool: ${invitation.poolId}`,
+        title: 'Joined Pool',
+        message: `You have joined the workspace "${invitation.pool.name}".`,
         type: 'POOL_JOINED',
         data: { poolId: invitation.poolId },
       },
     });
+
+    // Notify the pool owner
+    if (invitation.pool.ownerId !== userId) {
+      await tx.notification.create({
+        data: {
+          userId: invitation.pool.ownerId,
+          title: 'Collaborator Joined',
+          message: `${user.fullName || user.email} has accepted the invitation and joined "${invitation.pool.name}".`,
+          type: 'COLLABORATOR_JOINED',
+          data: { poolId: invitation.poolId, collaboratorUserId: userId },
+        },
+      });
+    }
 
     await tx.auditLog.create({
       data: {

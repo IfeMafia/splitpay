@@ -64,7 +64,7 @@ export default function CreatePoolPage() {
         description: description.trim() || undefined,
         currency,
       });
-      router.push(`/dashboard/pools/${project.id}`);
+      router.push(`/dashboard/pools/${project.id}/members`);
     } catch (err: unknown) {
       setState("error");
       setServerError(err instanceof Error ? err.message : "Something went wrong. Please try again.");

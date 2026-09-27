@@ -50,6 +50,12 @@ export async function configureSplit(
   userId: string,
   dto: ConfigureSplitDto,
 ): Promise<SplitConfigResponse> {
+  const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+  if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
+  if (pool.ownerId !== userId) {
+    throw new AppError(403, 'Only the pool owner can configure or edit splits', 'FORBIDDEN');
+  }
+
   const [members, invitations] = await Promise.all([
     prisma.poolMember.findMany({ where: { poolId } }),
     prisma.poolInvitation.findMany({

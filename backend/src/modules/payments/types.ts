@@ -36,4 +36,7 @@ export interface PaymentLinkResponse {
   paidAt: Date | string | null;
   createdAt: Date;
   updatedAt: Date;
+  poolName?: string;
+  description?: string | null;
+  merchantName?: string;
 }
