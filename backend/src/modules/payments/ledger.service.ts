@@ -44,7 +44,7 @@ export interface FinancialChainBreakdown {
  */
 export function calculateFinancialChain(
   grossAmountNaira: number,
-  platformFeePercent: number = Number(process.env.PLATFORM_FEE_PERCENT || 0),
+  platformFeePercent: number = Number(process.env.PLATFORM_FEE_PERCENT || 5),
   providerFeeNaira?: number,
   collaborators: Array<{
     id: string;

@@ -79,7 +79,7 @@ export function calculateAllocations({
   const chain = executeFinancialChain({
     grossAmountMinor: grossMinor,
     authoritativeProviderFeeMinor: feeMinor,
-    platformFeePercent: 0,
+    platformFeePercent: 5,
     collaborators,
   });
 

@@ -2,10 +2,10 @@
 
 export default function SplitsSection() {
   const splits = [
-    { role: "Producer",   pct: "40%", bar: 40 },
-    { role: "Vocalist",   pct: "30%", bar: 30 },
-    { role: "Songwriter", pct: "20%", bar: 20 },
-    { role: "Mixer",      pct: "10%", bar: 10 },
+    { role: "Designer",   pct: "40%", bar: 40 },
+    { role: "Developer",  pct: "30%", bar: 30 },
+    { role: "Copywriter", pct: "20%", bar: 20 },
+    { role: "Strategist", pct: "10%", bar: 10 },
   ];
 
   return (
@@ -102,7 +102,7 @@ export default function SplitsSection() {
                   fontSize: 10, fontWeight: 700, letterSpacing: "0.1em",
                   textTransform: "uppercase", color: "#bbb", marginBottom: 6,
                 }}>
-                  Highland Studio Session
+                  Product Launch Campaign
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 500, color: "#0A0A0A" }}>
                   Payment received

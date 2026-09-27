@@ -83,7 +83,7 @@ export default function FeaturesSection() {
                 borderRadius: 100, padding: "5px 12px",
                 fontSize: 10, fontWeight: 600, color: "#fff", letterSpacing: "0.05em",
               }}>
-                Pool Architecture
+                Collaborative Pools
               </div>
             </div>
           </div>
@@ -158,10 +158,10 @@ export default function FeaturesSection() {
                   fontStyle: "italic", fontFamily: "var(--font-serif)",
                   marginBottom: 16,
                 }}>
-                  "One payment link shared with the client. Verified allocations created server-side with deterministic split math and zero client-side trust."
+                  &ldquo;Share one payment link with your client. When they pay, every collaborator’s share is calculated and recorded automatically &mdash; no manual work, no back-and-forth.&rdquo;
                 </p>
                 <div style={{ fontSize: 12, color: "#555" }}>
-                  Autonomous payment distribution engine
+                  Built for teams that collaborate and get paid together
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

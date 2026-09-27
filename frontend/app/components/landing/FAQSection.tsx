@@ -57,7 +57,7 @@ export default function FAQSection() {
               </span>
             </h2>
             <p style={{ fontSize: 14, color: "#999", lineHeight: 1.7, maxWidth: 360, marginBottom: 40 }}>
-              Built for creative teams that work together and deserve to get paid together — without the admin overhead.
+              Built for any team that works together on a project and gets paid by a client — without the admin overhead.
             </p>
 
             {/* Photo — real, clean, no dark overlay */}
@@ -76,9 +76,9 @@ export default function FAQSection() {
                 border: "1px solid rgba(255,255,255,0.8)",
               }}>
                 <p style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", lineHeight: 1.4, margin: 0, marginBottom: 4 }}>
-                  "Automated multi-party revenue splitting with server-verified records."
+                  &ldquo;One payment in. Every collaborator paid out. No manual transfers.&rdquo;
                 </p>
-                <div style={{ fontSize: 11, color: "#888" }}>Splitpay allocation protocol</div>
+                <div style={{ fontSize: 11, color: "#888" }}>How Splitpay works</div>
               </div>
             </div>
           </div>
