@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
 import { env } from '../../config/env';
+import { sendEmail } from '../../lib/mailer';
 import { AppError } from '../../middleware/errorHandler';
 import { RegisterDto, LoginDto, GoogleAuthDto, ForgotPasswordDto, ResetPasswordDto } from './validators';
 import { AuthResponse, UserProfile } from '../../contracts';
@@ -304,8 +305,34 @@ export async function forgotPassword(dto: ForgotPasswordDto): Promise<{ message:
     },
   });
 
+  const resetUrl = `${env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+  try {
+    await sendEmail({
+      to: email,
+      subject: 'Reset your SplitPay Password',
+      text: `You requested a password reset for your SplitPay account.\n\nPlease click the link below or copy it into your browser to reset your password:\n${resetUrl}\n\nThis link will expire in 1 hour. If you did not request this, please ignore this email.`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin-top: 0; font-size: 20px; font-weight: 600;">Reset Your Password</h2>
+          <p style="color: #334155; font-size: 15px; line-height: 1.5;">Hello,</p>
+          <p style="color: #334155; font-size: 15px; line-height: 1.5;">You requested a password reset for your <strong>SplitPay</strong> account.</p>
+          <div style="margin: 32px 0; text-align: center;">
+            <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block;">Reset Password</a>
+          </div>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.4;">Or copy and paste this link into your browser:</p>
+          <p style="color: #2563eb; font-size: 13px; word-break: break-all;"><a href="${resetUrl}" style="color: #2563eb;">${resetUrl}</a></p>
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; margin: 0;">This link will expire in 1 hour. If you did not request a password reset, you can safely ignore this email.</p>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error('[Mailer Error] Failed to send password reset email:', err);
+  }
+
   return {
-    message: "Password reset link generated successfully.",
+    message: "Password reset link sent to your email.",
     token: resetToken,
   };
 }

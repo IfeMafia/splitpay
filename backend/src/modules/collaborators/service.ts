@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../lib/prisma';
+import { env } from '../../config/env';
+import { sendEmail } from '../../lib/mailer';
 import { AppError } from '../../middleware/errorHandler';
 import { InvitationStatus, InvitationType, PoolRole } from '@prisma/client';
 import { generateShortToken, generateDigitCode, generateCharToken } from '../../utils/token';
@@ -59,6 +61,12 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
   if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
   if (pool.ownerId !== inviterId) throw new AppError(403, 'Only the pool owner can invite collaborators', 'FORBIDDEN');
 
+  const inviter = await prisma.user.findUnique({
+    where: { id: inviterId },
+    select: { fullName: true, email: true },
+  });
+  const inviterName = inviter?.fullName || inviter?.email || 'A Pool Owner';
+
   const normalizedEmail = dto.invitedEmail?.trim().toLowerCase();
 
   // If email is provided, check if user already exists on the platform
@@ -116,6 +124,32 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
           metadata: { poolId, userId: existingUser.id, email: normalizedEmail },
         },
       });
+
+      // Send email notification to existing user
+      const poolUrl = `${env.FRONTEND_URL}/dashboard/pools/${pool.id}`;
+      try {
+        await sendEmail({
+          to: existingUser.email,
+          subject: `You've been added to "${pool.name}" on SplitPay`,
+          text: `Hello ${existingUser.fullName || ''},\n\n${inviterName} has added you as a collaborator to the pool "${pool.name}" on SplitPay.\n\nView pool: ${poolUrl}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+              <h2 style="color: #0f172a; margin-top: 0; font-size: 20px; font-weight: 600;">You've Been Added to a Pool</h2>
+              <p style="color: #334155; font-size: 15px; line-height: 1.5;">Hello ${existingUser.fullName || ''},</p>
+              <p style="color: #334155; font-size: 15px; line-height: 1.5;">
+                <strong>${inviterName}</strong> has added you as a collaborator to the pool <strong>"${pool.name}"</strong> on SplitPay.
+              </p>
+              <div style="margin: 32px 0; text-align: center;">
+                <a href="${poolUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">View Pool</a>
+              </div>
+              <p style="color: #64748b; font-size: 13px; line-height: 1.4;">Or copy and paste this link into your browser:</p>
+              <p style="color: #2563eb; font-size: 13px; word-break: break-all;"><a href="${poolUrl}" style="color: #2563eb;">${poolUrl}</a></p>
+            </div>
+          `,
+        });
+      } catch (err) {
+        console.error('[Mailer Error] Failed to send addition email to existing user:', err);
+      }
 
       return {
         id: member.id,
@@ -182,6 +216,40 @@ export async function createInvitation(inviterId: string, dto: CreateInvitationD
       metadata: { poolId, email: normalizedEmail, token, code: inviteCode, splitPercentage: dto.splitPercentage },
     },
   });
+
+  // Send invitation email if email was specified
+  if (normalizedEmail) {
+    const joinUrl = `${env.FRONTEND_URL}/join/${invitation.token}`;
+    try {
+      await sendEmail({
+        to: normalizedEmail,
+        subject: `You've been invited to join "${pool.name}" on SplitPay`,
+        text: `Hello,\n\n${inviterName} has invited you to collaborate on the pool "${pool.name}" on SplitPay.\n\nClick the link below to accept the invitation and join:\n${joinUrl}\n\nInvite Code: ${invitation.code || inviteCode}\n\nThis invitation link will expire in 7 days.`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px; font-weight: 600;">You're Invited!</h2>
+            <p style="color: #334155; font-size: 15px; line-height: 1.5;">Hello,</p>
+            <p style="color: #334155; font-size: 15px; line-height: 1.5;">
+              <strong>${inviterName}</strong> has invited you to collaborate on <strong>"${pool.name}"</strong> on SplitPay.
+            </p>
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 24px 0; text-align: center;">
+              <p style="margin: 0 0 6px 0; color: #64748b; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">Invite Code</p>
+              <p style="margin: 0; font-family: monospace; font-size: 24px; font-weight: 700; letter-spacing: 3px; color: #0f172a;">${(invitation.code || inviteCode).toUpperCase()}</p>
+            </div>
+            <div style="margin: 32px 0; text-align: center;">
+              <a href="${joinUrl}" style="background-color: #2563eb; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">Accept Invitation</a>
+            </div>
+            <p style="color: #64748b; font-size: 13px; line-height: 1.4;">Or copy and paste this link into your browser:</p>
+            <p style="color: #2563eb; font-size: 13px; word-break: break-all;"><a href="${joinUrl}" style="color: #2563eb;">${joinUrl}</a></p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <p style="color: #94a3b8; font-size: 12px; margin: 0;">This invitation link will expire in 7 days.</p>
+          </div>
+        `,
+      });
+    } catch (err) {
+      console.error('[Mailer Error] Failed to send invitation email:', err);
+    }
+  }
 
   return {
     id: invitation.token,
