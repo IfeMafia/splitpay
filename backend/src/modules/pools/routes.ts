@@ -5,6 +5,7 @@ import { validateBody } from '../../middleware/validate';
 import { createPoolSchema, updatePoolSchema, addMemberSchema } from './validators';
 import splitRoutes from '../splits/routes';
 import withdrawalRoutes from '../withdrawals/routes';
+import transactionRoutes from '../transactions/routes';
 
 const router = Router();
 
@@ -21,6 +22,9 @@ router.delete('/:poolId', authenticate, requirePoolOwner, poolController.deleteP
 router.get('/:poolId/members', authenticate, requirePoolMember, poolController.getMembers);
 router.post('/:poolId/members', authenticate, requirePoolOwner, validateBody(addMemberSchema), poolController.addMember);
 router.delete('/:poolId/members/:memberId', authenticate, requirePoolOwner, poolController.removeMember);
+
+// Transactions
+router.use('/:poolId/transactions', transactionRoutes);
 
 // Split configuration, allocations, and balance — handled by splits module
 router.use('/:poolId', splitRoutes);
