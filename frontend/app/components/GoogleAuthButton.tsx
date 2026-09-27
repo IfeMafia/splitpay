@@ -105,7 +105,6 @@ export default function GoogleAuthButton({
             width: "100%",
           });
 
-          window.google.accounts.id.prompt();
           return true;
         } catch (e) {
           console.error("Error initializing Google Identity Services:", e);

@@ -12,7 +12,7 @@ export async function createPaymentLink(
     // Frontend sends { projectId, expectedAmount, currency, provider }
     // Map to service signature
     const { projectId, expectedAmount, currency, provider } = req.body;
-    const result = await paymentService.createPaymentLink({
+    const result = await paymentService.createPaymentLink(req.user!.id, {
       projectId,
       expectedAmount: Number(expectedAmount),
       currency,

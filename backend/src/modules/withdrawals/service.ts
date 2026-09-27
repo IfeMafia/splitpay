@@ -8,6 +8,8 @@ import {
   createPaystackTransferRecipient,
   initiatePaystackTransfer,
 } from '../../lib/paystack';
+import { sendEmail } from '../../lib/mailer';
+import { formatWithdrawalInitiatedEmail } from '../../lib/emailTemplates';
 
 export async function requestWithdrawal(
   poolId: string,
@@ -150,6 +152,29 @@ export async function requestWithdrawal(
         },
       });
     });
+
+    // Send asynchronous notification email to member
+    if (member.user.email) {
+      try {
+        const emailContent = formatWithdrawalInitiatedEmail({
+          userName: member.user.fullName || member.user.email,
+          poolName: member.pool.name,
+          amount: dto.amount,
+          currency: member.pool.currency,
+          accountName: dto.accountName,
+          accountNumber: dto.accountNumber,
+          withdrawalId: withdrawal.id,
+        });
+        await sendEmail({
+          to: member.user.email,
+          subject: emailContent.subject,
+          html: emailContent.html,
+          text: emailContent.text,
+        });
+      } catch (emailErr) {
+        console.error('[Mailer Error] Failed to send withdrawal initiated email:', emailErr);
+      }
+    }
 
     return {
       id: withdrawal.id,

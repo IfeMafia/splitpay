@@ -8,6 +8,7 @@ import { formatDate, formatRelativeTime, formatPercent, shortId } from "../../..
 import { toast } from "@/app/components/Toast";
 import { getUser } from "@/app/lib/auth";
 import ConfirmModal from "@/app/components/ui/ConfirmModal";
+import PoolNavTabs from "../../_components/PoolNavTabs";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -388,6 +389,13 @@ export default function MembersPage({ params }: Props) {
           </div>
         )}
       </div>
+
+      {/* ── Navigation Tabs ── */}
+      <PoolNavTabs
+        poolId={poolId}
+        isOwner={isOwner}
+        memberCount={collaborators.length}
+      />
 
       {/* ── Invite code section ── */}
       {showCodeSection && !showForm && (

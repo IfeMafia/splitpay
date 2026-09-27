@@ -35,6 +35,8 @@ export interface PoolResponse {
   updatedAt: Date | string;
   memberCount?: number;
   members?: PoolMemberResponse[];
+  userRole?: PoolRole | string;
+  totalAmount?: number;
 }
 
 export interface PoolMemberResponse {

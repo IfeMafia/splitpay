@@ -5,6 +5,8 @@ import Link from "next/link";
 import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatAmount, formatDate, shortId } from "../../../../../lib/format";
+import { getUser } from "@/app/lib/auth";
+import PoolNavTabs from "../../_components/PoolNavTabs";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -12,6 +14,7 @@ interface Pool {
   id: string;
   name: string;
   currency: string;
+  ownerId: string;
 }
 
 interface MemberBalance {
@@ -127,6 +130,9 @@ export default function WithdrawalsPage({ params }: Props) {
   if (pageState === "error") return <PageError message={errorMsg} status={errorStatus} poolId={poolId} />;
   if (!pool || !balance) return null;
 
+  const currentUser = getUser();
+  const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
+
   return (
     <div style={{ maxWidth: 840 }}>
       {/* Breadcrumb */}
@@ -137,16 +143,18 @@ export default function WithdrawalsPage({ params }: Props) {
         <Chevron />
         <BreadLink href={`/dashboard/pools/${poolId}`}>{pool.name}</BreadLink>
         <Chevron />
-        <span style={{ fontSize: 12.5, color: "#0A0A0A" }}>Balance & Transactions</span>
+        <span style={{ fontSize: 12.5, color: "#0A0A0A" }}>
+          {isOwner ? "Treasury & Transactions" : "My Balance & Payouts"}
+        </span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 40 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 32 }}>
         <div>
           <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.07em", textTransform: "uppercase", color: "#bbb", marginBottom: 5 }}>
             {pool.name}
           </p>
           <h1 style={{ fontSize: 24, fontWeight: 500, letterSpacing: "-0.03em", color: "#0A0A0A", lineHeight: 1.2 }}>
-            Balance & Transactions
+            {isOwner ? "Treasury & Transactions" : "My Balance & Payouts"}
           </h1>
         </div>
         <button
@@ -170,6 +178,12 @@ export default function WithdrawalsPage({ params }: Props) {
           Withdraw Funds
         </button>
       </div>
+
+      {/* ── Navigation Tabs ── */}
+      <PoolNavTabs
+        poolId={poolId}
+        isOwner={isOwner}
+      />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 40 }}>
         <StatCard label="Total Received" amount={balance.totalReceived} currency={balance.currency} />

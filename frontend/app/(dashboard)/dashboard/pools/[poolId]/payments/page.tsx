@@ -8,6 +8,7 @@ import { formatAmount, formatDate, formatRelativeTime } from "../../../../../lib
 import { toast } from "@/app/components/Toast";
 import { getUser } from "@/app/lib/auth";
 import ConfirmModal from "@/app/components/ui/ConfirmModal";
+import PoolNavTabs from "../../_components/PoolNavTabs";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -199,17 +200,74 @@ export default function PaymentsPage({ params }: Props) {
             Payment links
           </h1>
         </div>
-        {hasPayments && !showForm && !confirmedPayment && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Refresh button — always visible so owner can pull fresh payment status */}
           <button
-            onClick={() => setShowForm(true)}
-            style={btnStyle}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            onClick={() => load()}
+            title="Refresh payment status"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "9px 14px", borderRadius: 100,
+              background: "none", color: "#888",
+              border: "1px solid rgba(0,0,0,0.10)",
+              fontSize: 12.5, fontWeight: 500, cursor: "pointer",
+              fontFamily: "inherit", transition: "background 140ms",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
           >
-            <PlusIcon /> New link
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 4v6h-6" /><path d="M1 20v-6h6" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            Refresh
           </button>
-        )}
+          {hasPayments && !showForm && !confirmedPayment && isOwner && (
+            <button
+              onClick={() => setShowForm(true)}
+              style={btnStyle}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            >
+              <PlusIcon /> New link
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── Navigation Tabs ── */}
+      <PoolNavTabs
+        poolId={poolId}
+        isOwner={isOwner}
+        paymentCount={payments.length}
+      />
+
+      {/* Payment confirmed — link locked banner */}
+      {confirmedPayment && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 12,
+          padding: "14px 16px", borderRadius: 12, marginBottom: 20,
+          background: "rgba(22,163,74,0.05)", border: "1px solid rgba(22,163,74,0.18)",
+        }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+            background: "rgba(22,163,74,0.10)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 500, color: "#166534", marginBottom: 3 }}>Payment confirmed — link closed</p>
+            <p style={{ fontSize: 12.5, color: "#15803D", lineHeight: 1.55 }}>
+              This pool&apos;s payment link has been deactivated after a successful payment. Go to{" "}
+              <a href={`/dashboard/pools/${poolId}/split`} style={{ color: "#15803D", fontWeight: 500 }}>Configure split</a>{" "}
+              to distribute funds to your collaborators.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Success flash */}
       {createState === "success" && (
@@ -326,16 +384,20 @@ export default function PaymentsPage({ params }: Props) {
             No payment link yet
           </p>
           <p style={{ fontSize: 13.5, color: "#888", lineHeight: 1.65, marginBottom: 24, maxWidth: 380 }}>
-            Generate a unique payment link for this Pool and share it with your client. They pay without needing a Splitpay account.
+            {isOwner
+              ? "Generate a unique payment link for this Pool and share it with your client. They pay without needing a Splitpay account."
+              : "The pool owner has not generated a payment link yet. Once created, client payment status will appear here."}
           </p>
-          <button
-            onClick={() => setShowForm(true)}
-            style={btnStyle}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-          >
-            <PlusIcon /> Generate payment link
-          </button>
+          {isOwner && (
+            <button
+              onClick={() => setShowForm(true)}
+              style={btnStyle}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            >
+              <PlusIcon /> Generate payment link
+            </button>
+          )}
         </div>
       )}
 

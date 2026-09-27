@@ -21,6 +21,11 @@ function mapPaymentLink(
     isActive: boolean;
     createdAt: Date;
     updatedAt: Date;
+    pool?: {
+      name: string;
+      description?: string | null;
+      owner?: { fullName: string | null; email: string };
+    } | null;
     transactions?: Array<{
       id: string;
       status: PaymentStatus;
@@ -58,6 +63,9 @@ function mapPaymentLink(
     paidAt: activeTxn?.paidAt ?? null,
     createdAt: link.createdAt,
     updatedAt: link.updatedAt,
+    poolName: link.pool?.name || link.title,
+    description: link.pool?.description || null,
+    merchantName: link.pool?.owner?.fullName || 'Verified SplitPay Merchant',
   };
 }
 
@@ -65,14 +73,23 @@ function mapPaymentLink(
  * Create a shareable PaymentLink for a pool.
  * Body: { projectId, expectedAmount, currency, provider }  (frontend shape)
  */
-export async function createPaymentLink(dto: {
-  projectId: string;
-  expectedAmount: number;
-  currency: string;
-  provider?: string;
-}): Promise<{ payment: PaymentLinkResponse; checkoutUrl: string }> {
-  const pool = await prisma.pool.findUnique({ where: { id: dto.projectId } });
+export async function createPaymentLink(
+  actorId: string,
+  dto: {
+    projectId: string;
+    expectedAmount: number;
+    currency: string;
+    provider?: string;
+  }
+): Promise<{ payment: PaymentLinkResponse; checkoutUrl: string }> {
+  const pool = await prisma.pool.findUnique({
+    where: { id: dto.projectId },
+    include: { owner: { select: { fullName: true, email: true } } },
+  });
   if (!pool) throw new AppError(404, 'Pool not found', 'NOT_FOUND');
+  if (pool.ownerId !== actorId) {
+    throw new AppError(403, 'Only the pool owner can create payment links', 'FORBIDDEN');
+  }
 
   let tokenCode = generateCharToken(3);
   let existingToken = await prisma.paymentLink.findUnique({ where: { token: tokenCode } });
@@ -92,6 +109,11 @@ export async function createPaymentLink(dto: {
       amount: dto.expectedAmount,
       currency: dto.currency.toUpperCase(),
     },
+    include: {
+      pool: {
+        include: { owner: { select: { fullName: true, email: true } } },
+      },
+    },
   });
 
   const payment = mapPaymentLink({ ...link, transactions: [] });
@@ -108,6 +130,11 @@ export async function getPaymentByToken(token: string): Promise<PaymentLinkRespo
   const link = await prisma.paymentLink.findUnique({
     where: { token },
     include: {
+      pool: {
+        include: {
+          owner: { select: { fullName: true, email: true } },
+        },
+      },
       transactions: {
         orderBy: { createdAt: 'desc' },
         take: 5,

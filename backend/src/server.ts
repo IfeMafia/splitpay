@@ -7,18 +7,26 @@ import type { Server } from 'http';
 let server: Server;
 
 async function bootstrap() {
-  try {
-    console.log('Connecting to PostgreSQL database...');
-    await prisma.$connect();
-    console.log('Database connected successfully.');
-
-    server = app.listen(env.PORT, () => {
-      console.log(`Splitpay backend running on port ${env.PORT} [${env.NODE_ENV}]`);
-    });
-  } catch (error) {
-    console.error('Failed to connect to the database on startup:', error);
-    process.exit(1);
+  console.log('Connecting to PostgreSQL database...');
+  let connected = false;
+  let attempts = 0;
+  while (!connected && attempts < 5) {
+    try {
+      attempts++;
+      await prisma.$connect();
+      connected = true;
+      console.log('Database connected successfully.');
+    } catch (error) {
+      console.warn(`Database connection attempt ${attempts} failed:`, error instanceof Error ? error.message : error);
+      if (attempts < 5) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
   }
+
+  server = app.listen(env.PORT, () => {
+    console.log(`Splitpay backend running on port ${env.PORT} [${env.NODE_ENV}]`);
+  });
 }
 
 // Graceful shutdown handling

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "../../../lib/api";
 import StatusBadge from "../../../components/ui/StatusBadge";
 import { formatAmount, formatDate } from "../../../lib/format";
+import { getUser } from "@/app/lib/auth";
 
 interface Pool {
   id: string;
@@ -15,9 +16,12 @@ interface Pool {
   currency: string;
   status: string;
   createdAt: string;
+  ownerId?: string;
+  userRole?: string;
 }
 
 type LoadState = "loading" | "ready" | "error";
+type FilterTab = "all" | "created" | "collaborations";
 
 export default function PoolsPage() {
   const cachedProjects = api.getCached<Pool[]>("/projects") || api.getCached<Pool[]>("/pools");
@@ -25,6 +29,11 @@ export default function PoolsPage() {
   const [loadState, setLoadState] = useState<LoadState>(cachedProjects ? "ready" : "loading");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [activeTab, setActiveTab] = useState<FilterTab>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const currentUser = getUser();
+  const currentUserId = currentUser?.id;
 
   const router = useRouter();
 
@@ -71,17 +80,33 @@ export default function PoolsPage() {
       });
   }, []);
 
+  const { createdPools, collabPools, filteredPools } = useMemo(() => {
+    const created = pools.filter(p => p.ownerId === currentUserId || p.userRole === 'OWNER');
+    const collab = pools.filter(p => p.ownerId !== currentUserId && p.userRole !== 'OWNER');
+
+    let base = pools;
+    if (activeTab === "created") base = created;
+    if (activeTab === "collaborations") base = collab;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      base = base.filter(p => p.name.toLowerCase().includes(q) || (p.description && p.description.toLowerCase().includes(q)));
+    }
+
+    return { createdPools: created, collabPools: collab, filteredPools: base };
+  }, [pools, currentUserId, activeTab, searchQuery]);
+
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div style={{ maxWidth: 960 }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 32 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 28, flexWrap: "wrap" }}>
         <div>
           <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.07em", textTransform: "uppercase", color: "#bbb", marginBottom: 5 }}>
-            Pools
+            Workspaces
           </p>
           <h1 style={{ fontSize: 22, fontWeight: 500, letterSpacing: "-0.025em", color: "#0A0A0A", lineHeight: 1.2 }}>
-            Your Pools
+            Pools & Splits
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -98,6 +123,10 @@ export default function PoolsPage() {
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
           >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8.5" cy="7" r="4" />
+              <line x1="20" y1="8" x2="20" y2="14" /><line x1="17" y1="11" x2="23" y2="11" />
+            </svg>
             Join a Pool
           </button>
           <Link
@@ -167,6 +196,74 @@ export default function PoolsPage() {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filter Tabs & Search */}
+      {loadState === "ready" && pools.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 16, marginBottom: 20, flexWrap: "wrap",
+        }}>
+          {/* Tabs */}
+          <div style={{
+            display: "flex", gap: 2, background: "rgba(0,0,0,0.04)",
+            borderRadius: 9, padding: 3, width: "fit-content",
+          }}>
+            {[
+              { id: "all" as const, label: "All Pools", count: pools.length },
+              { id: "created" as const, label: "Created by You", count: createdPools.length },
+              { id: "collaborations" as const, label: "Collaborations", count: collabPools.length },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "7px 14px", borderRadius: 7, border: "none",
+                  background: activeTab === tab.id ? "#fff" : "transparent",
+                  color: activeTab === tab.id ? "#0A0A0A" : "#777",
+                  fontSize: 12.5, fontWeight: activeTab === tab.id ? 500 : 400,
+                  cursor: "pointer", fontFamily: "inherit",
+                  boxShadow: activeTab === tab.id ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                  transition: "all 120ms ease",
+                }}
+              >
+                <span>{tab.label}</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 600,
+                  padding: "1px 6px", borderRadius: 100,
+                  background: activeTab === tab.id ? "#0A0A0A" : "rgba(0,0,0,0.06)",
+                  color: activeTab === tab.id ? "#fff" : "#888",
+                }}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Search */}
+          <div style={{ position: "relative", minWidth: 200 }}>
+            <input
+              type="text"
+              placeholder="Search pools…"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{
+                width: "100%", padding: "7px 12px 7px 30px", borderRadius: 8,
+                border: "1px solid rgba(0,0,0,0.08)", background: "#fff",
+                fontSize: 12.5, color: "#0A0A0A", outline: "none",
+              }}
+            />
+            <svg
+              width="13" height="13" viewBox="0 0 24 24" fill="none"
+              stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
           </div>
         </div>
       )}
@@ -248,7 +345,7 @@ export default function PoolsPage() {
         </div>
       )}
 
-      {/* Empty */}
+      {/* Empty overall */}
       {loadState === "ready" && pools.length === 0 && (
         <div style={{ paddingTop: 48, maxWidth: 400 }}>
           <div style={{
@@ -264,7 +361,7 @@ export default function PoolsPage() {
             No Pools yet
           </h2>
           <p style={{ fontSize: 13.5, color: "#888", lineHeight: 1.65, marginBottom: 24 }}>
-            Create your first Pool to get started. Each Pool is a shared workspace for one collaborative project.
+            Create your first Pool to get started, or join a collaborative workspace with an invite link.
           </p>
           <Link
             href="/dashboard/pools/new"
@@ -283,56 +380,88 @@ export default function PoolsPage() {
         </div>
       )}
 
-      {/* Pools list */}
-      {loadState === "ready" && pools.length > 0 && (
-        <>
-          <p style={{ fontSize: 11, color: "#bbb", marginBottom: 10 }}>
-            {pools.length} {pools.length === 1 ? "Pool" : "Pools"}
+      {/* Empty tab results */}
+      {loadState === "ready" && pools.length > 0 && filteredPools.length === 0 && (
+        <div style={{
+          padding: "36px 20px", textAlign: "center", background: "#fff",
+          borderRadius: 12, border: "1px solid rgba(0,0,0,0.07)",
+        }}>
+          <p style={{ fontSize: 14, fontWeight: 500, color: "#0A0A0A", marginBottom: 4 }}>
+            {activeTab === "created"
+              ? "You haven't created any pools yet"
+              : activeTab === "collaborations"
+              ? "You haven't joined any collaboration pools yet"
+              : "No matching pools found"}
           </p>
-          <div style={{ border: "1px solid rgba(0,0,0,0.07)", borderRadius: 12, background: "#fff", overflow: "hidden" }}>
-            {pools.map((pool, i) => (
+          <p style={{ fontSize: 12.5, color: "#888" }}>
+            {activeTab === "created"
+              ? "Click 'New Pool' above to set up your first managed workspace."
+              : activeTab === "collaborations"
+              ? "When someone invites you to their pool, it will appear here."
+              : "Try adjusting your search query or filter tab."}
+          </p>
+        </div>
+      )}
+
+      {/* Pools list */}
+      {loadState === "ready" && filteredPools.length > 0 && (
+        <div style={{ border: "1px solid rgba(0,0,0,0.07)", borderRadius: 14, background: "#fff", overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
+          {filteredPools.map((pool, i) => {
+            const isOwner = pool.ownerId === currentUserId || pool.userRole === "OWNER";
+            return (
               <Link
                 key={pool.id}
                 href={`/dashboard/pools/${pool.id}`}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "15px 18px", gap: 14,
-                  borderBottom: i < pools.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
+                  padding: "16px 20px", gap: 16,
+                  borderBottom: i < filteredPools.length - 1 ? "1px solid rgba(0,0,0,0.05)" : "none",
                   textDecoration: "none", transition: "background 100ms",
                 }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#FAFAFA"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0 }}>
                   <div style={{
-                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                    background: "#0A0A0A", color: "#fff",
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                    background: isOwner ? "#0A0A0A" : "#2563EB", color: "#fff",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 600,
+                    fontSize: 14, fontWeight: 600,
                   }}>
                     {pool.name.trim()[0]?.toUpperCase() ?? "P"}
                   </div>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 500, color: "#0A0A0A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {pool.name}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: "#0A0A0A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {pool.name}
+                      </span>
+                      <span style={{
+                        fontSize: 10.5, fontWeight: 600,
+                        color: isOwner ? "#0A0A0A" : "#2563EB",
+                        background: isOwner ? "rgba(0,0,0,0.06)" : "rgba(37,99,235,0.08)",
+                        padding: "1.5px 7px", borderRadius: 100,
+                        textTransform: "uppercase", letterSpacing: "0.04em",
+                      }}>
+                        {isOwner ? "Owner" : "Collaborator"}
+                      </span>
                     </div>
-                    <div style={{ fontSize: 11.5, color: "#bbb", marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: "#888" }}>
                       {pool.description
-                        ? pool.description.length > 50 ? pool.description.slice(0, 50) + "…" : pool.description
-                        : formatDate(pool.createdAt)}
+                        ? pool.description.length > 55 ? pool.description.slice(0, 55) + "…" : pool.description
+                        : `Created ${formatDate(pool.createdAt)}`}
                     </div>
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: "#888" }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: "#888" }}>
                     {pool.memberCount} {pool.memberCount === 1 ? "member" : "members"}
                   </span>
                   <StatusBadge status={pool.status} />
                 </div>
               </Link>
-            ))}
-          </div>
-        </>
+            );
+          })}
+        </div>
       )}
 
     </div>
