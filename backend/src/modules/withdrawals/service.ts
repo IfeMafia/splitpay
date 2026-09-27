@@ -4,6 +4,10 @@ import { getPoolBalance } from '../splits/service';
 import { RequestWithdrawalDto } from './validators';
 import { WithdrawalResponse } from '../../contracts';
 import { WithdrawalStatus, PoolRole } from '@prisma/client';
+import {
+  createPaystackTransferRecipient,
+  initiatePaystackTransfer,
+} from '../../lib/paystack';
 
 export async function requestWithdrawal(
   poolId: string,
@@ -17,7 +21,7 @@ export async function requestWithdrawal(
         userId,
       },
     },
-    include: { pool: true },
+    include: { pool: true, user: true },
   });
 
   if (!member) {
@@ -37,6 +41,7 @@ export async function requestWithdrawal(
     );
   }
 
+  // Create withdrawal record in PENDING state inside a transaction
   const withdrawal = await prisma.$transaction(async (tx) => {
     const newWithdrawal = await tx.withdrawal.create({
       data: {
@@ -69,7 +74,7 @@ export async function requestWithdrawal(
       data: {
         userId,
         title: 'Withdrawal Requested',
-        message: `Your withdrawal request of ${member.pool.currency} ${dto.amount} has been queued.`,
+        message: `Your withdrawal request of ${member.pool.currency} ${dto.amount} has been queued for processing.`,
         type: 'WITHDRAWAL_REQUESTED',
         data: { withdrawalId: newWithdrawal.id, poolId },
       },
@@ -92,20 +97,132 @@ export async function requestWithdrawal(
     return newWithdrawal;
   });
 
-  return {
-    id: withdrawal.id,
-    poolId: withdrawal.poolId,
-    poolMemberId: withdrawal.poolMemberId,
-    amount: Number(withdrawal.amount),
-    currency: withdrawal.currency,
-    status: withdrawal.status,
-    providerReference: withdrawal.providerReference,
-    bankCode: withdrawal.bankCode,
-    accountNumber: withdrawal.accountNumber,
-    accountName: withdrawal.accountName,
-    failureReason: withdrawal.failureReason,
-    createdAt: withdrawal.createdAt,
-  };
+  // Initiate actual Paystack transfer outside transaction (non-atomic, handled via webhook)
+  try {
+    // 1. Create transfer recipient for the member's bank account
+    const recipientCode = await createPaystackTransferRecipient({
+      name: dto.accountName,
+      accountNumber: dto.accountNumber,
+      bankCode: dto.bankCode,
+      currency: member.pool.currency,
+    });
+
+    // 2. Initiate the transfer (reference = withdrawal ID for webhook correlation)
+    const transfer = await initiatePaystackTransfer({
+      recipientCode,
+      amountInNaira: dto.amount,
+      reason: `SplitPay withdrawal — Pool: ${member.pool.name}`,
+      reference: `wdr_${withdrawal.id}`,
+    });
+
+    // 3. Update withdrawal to PROCESSING with Paystack transfer reference
+    await prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { id: withdrawal.id },
+        data: {
+          status: WithdrawalStatus.PROCESSING,
+          providerReference: transfer.transferCode,
+        },
+      });
+
+      await tx.withdrawalEvent.create({
+        data: {
+          withdrawalId: withdrawal.id,
+          eventType: 'WITHDRAWAL_PROCESSING',
+          data: {
+            transferCode: transfer.transferCode,
+            reference: transfer.reference,
+            status: transfer.status,
+          },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'WITHDRAWAL',
+          entityId: withdrawal.id,
+          action: 'WITHDRAWAL_PROCESSING',
+          actorId: userId,
+          metadata: {
+            transferCode: transfer.transferCode,
+            reference: transfer.reference,
+          },
+        },
+      });
+    });
+
+    return {
+      id: withdrawal.id,
+      poolId: withdrawal.poolId,
+      poolMemberId: withdrawal.poolMemberId,
+      amount: Number(withdrawal.amount),
+      currency: withdrawal.currency,
+      status: WithdrawalStatus.PROCESSING,
+      providerReference: transfer.transferCode,
+      bankCode: withdrawal.bankCode,
+      accountNumber: withdrawal.accountNumber,
+      accountName: withdrawal.accountName,
+      failureReason: null,
+      createdAt: withdrawal.createdAt,
+    };
+  } catch (transferError) {
+    // If Paystack transfer initiation fails, mark the withdrawal as FAILED
+    const failureReason =
+      transferError instanceof Error ? transferError.message : 'Transfer initiation failed';
+
+    await prisma.$transaction(async (tx) => {
+      await tx.withdrawal.update({
+        where: { id: withdrawal.id },
+        data: {
+          status: WithdrawalStatus.FAILED,
+          failureReason,
+        },
+      });
+
+      await tx.withdrawalEvent.create({
+        data: {
+          withdrawalId: withdrawal.id,
+          eventType: 'WITHDRAWAL_FAILED',
+          data: { reason: failureReason },
+        },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId,
+          title: 'Withdrawal Failed',
+          message: `Your withdrawal of ${member.pool.currency} ${dto.amount} could not be processed. Reason: ${failureReason}`,
+          type: 'WITHDRAWAL_FAILED',
+          data: { withdrawalId: withdrawal.id, poolId, reason: failureReason },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'WITHDRAWAL',
+          entityId: withdrawal.id,
+          action: 'WITHDRAWAL_FAILED',
+          actorId: userId,
+          metadata: { reason: failureReason },
+        },
+      });
+    });
+
+    return {
+      id: withdrawal.id,
+      poolId: withdrawal.poolId,
+      poolMemberId: withdrawal.poolMemberId,
+      amount: Number(withdrawal.amount),
+      currency: withdrawal.currency,
+      status: WithdrawalStatus.FAILED,
+      providerReference: null,
+      bankCode: withdrawal.bankCode,
+      accountNumber: withdrawal.accountNumber,
+      accountName: withdrawal.accountName,
+      failureReason,
+      createdAt: withdrawal.createdAt,
+    };
+  }
 }
 
 export async function getPoolWithdrawals(

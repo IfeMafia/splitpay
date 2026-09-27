@@ -57,21 +57,110 @@ export async function processWebhookEvent(
         }
       } else if (dto.eventType === 'transfer.success') {
         const reference = dto.rawPayload?.data?.reference;
-        if (reference) {
-          await prisma.withdrawal.updateMany({
-            where: { providerReference: reference },
-            data: { status: WithdrawalStatus.SUCCESSFUL },
+        const transferCode = dto.rawPayload?.data?.transfer_code;
+        const withdrawalId = reference?.startsWith('wdr_') ? reference.replace('wdr_', '') : null;
+
+        const withdrawal = await prisma.withdrawal.findFirst({
+          where: {
+            OR: [
+              ...(withdrawalId ? [{ id: withdrawalId }] : []),
+              ...(reference ? [{ providerReference: reference }] : []),
+              ...(transferCode ? [{ providerReference: transferCode }] : []),
+            ],
+          },
+          include: { poolMember: true },
+        });
+
+        if (withdrawal) {
+          await prisma.$transaction(async (tx) => {
+            await tx.withdrawal.update({
+              where: { id: withdrawal.id },
+              data: { status: WithdrawalStatus.SUCCESSFUL },
+            });
+
+            await tx.withdrawalEvent.create({
+              data: {
+                withdrawalId: withdrawal.id,
+                eventType: 'WITHDRAWAL_SUCCESS',
+                data: { reference, transferCode, rawData: dto.rawPayload?.data },
+              },
+            });
+
+            await tx.notification.create({
+              data: {
+                userId: withdrawal.poolMember.userId,
+                title: 'Withdrawal Successful',
+                message: `Your withdrawal of ${withdrawal.currency} ${withdrawal.amount} has been successfully processed.`,
+                type: 'WITHDRAWAL_SUCCESS',
+                data: { withdrawalId: withdrawal.id, poolId: withdrawal.poolId },
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                entityType: 'WITHDRAWAL',
+                entityId: withdrawal.id,
+                action: 'WITHDRAWAL_SUCCESS',
+                metadata: { reference, transferCode },
+              },
+            });
           });
         }
       } else if (dto.eventType === 'transfer.failed' || dto.eventType === 'transfer.reversed') {
         const reference = dto.rawPayload?.data?.reference;
-        if (reference) {
-          await prisma.withdrawal.updateMany({
-            where: { providerReference: reference },
-            data: {
-              status: dto.eventType === 'transfer.reversed' ? WithdrawalStatus.REVERSED : WithdrawalStatus.FAILED,
-              failureReason: dto.rawPayload?.data?.reason || 'Transfer failed',
-            },
+        const transferCode = dto.rawPayload?.data?.transfer_code;
+        const failureReason = dto.rawPayload?.data?.reason || 'Transfer failed';
+        const withdrawalId = reference?.startsWith('wdr_') ? reference.replace('wdr_', '') : null;
+
+        const withdrawal = await prisma.withdrawal.findFirst({
+          where: {
+            OR: [
+              ...(withdrawalId ? [{ id: withdrawalId }] : []),
+              ...(reference ? [{ providerReference: reference }] : []),
+              ...(transferCode ? [{ providerReference: transferCode }] : []),
+            ],
+          },
+          include: { poolMember: true },
+        });
+
+        if (withdrawal) {
+          const newStatus = dto.eventType === 'transfer.reversed' ? WithdrawalStatus.REVERSED : WithdrawalStatus.FAILED;
+
+          await prisma.$transaction(async (tx) => {
+            await tx.withdrawal.update({
+              where: { id: withdrawal.id },
+              data: {
+                status: newStatus,
+                failureReason,
+              },
+            });
+
+            await tx.withdrawalEvent.create({
+              data: {
+                withdrawalId: withdrawal.id,
+                eventType: dto.eventType === 'transfer.reversed' ? 'WITHDRAWAL_REVERSED' : 'WITHDRAWAL_FAILED',
+                data: { reason: failureReason, reference, transferCode },
+              },
+            });
+
+            await tx.notification.create({
+              data: {
+                userId: withdrawal.poolMember.userId,
+                title: dto.eventType === 'transfer.reversed' ? 'Withdrawal Reversed' : 'Withdrawal Failed',
+                message: `Your withdrawal of ${withdrawal.currency} ${withdrawal.amount} failed. Reason: ${failureReason}`,
+                type: 'WITHDRAWAL_FAILED',
+                data: { withdrawalId: withdrawal.id, poolId: withdrawal.poolId, reason: failureReason },
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                entityType: 'WITHDRAWAL',
+                entityId: withdrawal.id,
+                action: dto.eventType === 'transfer.reversed' ? 'WITHDRAWAL_REVERSED' : 'WITHDRAWAL_FAILED',
+                metadata: { reason: failureReason, reference, transferCode },
+              },
+            });
           });
         }
       }
