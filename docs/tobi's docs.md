@@ -1,14 +1,14 @@
 # Tobi's Financial & Paystack Infrastructure Documentation
 
 > **Role:** Backend Financial & Database Owner  
-> **Subsystems Covered:** T1 – T11 (Paystack Infrastructure, State Machine, Ledger, Fee Engine, Allocations, Withdrawals, Audit Events)  
+> **Subsystems Covered:** T1 – T11 (Paystack Infrastructure, Transaction State Machine, Ledger, Fee Engine, Allocations, Balance Infrastructure, Withdrawals, Webhook Idempotency, Financial Audit & Testing)  
 > **Target Audience:** Frontend Engineers (Abraham), Backend Engineers (Samkiel), Code Reviewers  
 
 ---
 
 ## 📑 Table of Contents
-1. [Overview & Architecture](#1-overview--architecture)
-2. [The Financial Chain Breakdown](#2-the-financial-chain-breakdown)
+1. [Overview & Subsystem Architecture](#1-overview--subsystem-architecture)
+2. [Financial Chain & Calculation Rules](#2-financial-chain--calculation-rules)
 3. [Database Schema Models](#3-database-schema-models)
 4. [API Endpoints Reference](#4-api-endpoints-reference)
 5. [Frontend Integration Guide (For Abraham)](#5-frontend-integration-guide-for-abraham)
@@ -16,9 +16,9 @@
 
 ---
 
-## 1. Overview & Architecture
+## 1. Overview & Subsystem Architecture
 
-This financial module owns the payment checkout initialization, Paystack gateway integration, authoritative payment verification, split snapshotting, minor-unit financial ledger calculations, balance tracking, and withdrawal processing.
+This module owns the complete financial lifecycle: payment checkout initialization, Paystack gateway integration, authoritative payment confirmation, split snapshotting, minor-unit financial ledger calculations, pool balance tracking, member payout calculations, and withdrawal processing.
 
 ```text
 ┌─────────────────┐       ┌────────────────────┐       ┌────────────────────────┐
@@ -27,156 +27,130 @@ This financial module owns the payment checkout initialization, Paystack gateway
                                                                    │
                                                                    ▼
                                                        ┌────────────────────────┐
-                                                       │ Authoritative Verification│
+                                                       │ Authoritative Ledger   │
+                                                       │ Payment Verification   │
                                                        └────────────────────────┘
                                                                    │
                                                                    ▼
 ┌─────────────────┐       ┌────────────────────┐       ┌────────────────────────┐
-│ Project Account │ <───  │   SplitSnapshot    │ <───  │  Financial Chain Calc  │
-│ Ledger Balance  │       │ (Immutable Freeze) │       │ (Minor-unit kobo math) │
+│ Pool Member     │ <───  │   SplitSnapshot    │ <───  │  Financial Chain Calc  │
+│ Available Bal   │       │ (Immutable Freeze) │       │ (Minor-unit kobo math) │
 └─────────────────┘       └────────────────────┘       └────────────────────────┘
         │
         ▼
 ┌─────────────────┐       ┌────────────────────┐
-│ Member Payouts  │ ───>  │ Paystack Transfers │
-│ & Withdrawals   │       │ (Real/Mock Gateway)│
+│ Member Payout   │ ───>  │ Paystack Transfers │
+│ & Withdrawals   │       │ (Real / Test Mode) │
 └─────────────────┘       └────────────────────┘
 ```
 
 ---
 
-## 2. The Financial Chain Breakdown
+## 2. Financial Chain & Calculation Rules
 
-When a client pays an invoice/payment link, the server executes integer minor-unit (kobo) calculations to eliminate floating-point rounding errors ($1\text{ NGN} = 100\text{ kobo}$):
+When a client pays an invoice or payment link, the backend executes integer minor-unit (kobo) calculations ($1\text{ NGN} = 100\text{ kobo}$) to eliminate floating-point precision loss:
 
 $$\text{Gross Amount} = \text{Payment Actual Amount (e.g. ₦10,000.00)}$$
-$$\text{Provider Fee} = \text{Paystack Fee (e.g. 1.5\%)}$$
-$$\text{Platform Fee} = \text{Gross Amount} \times \left(\frac{\text{Project.platformFeePercent}}{100}\right)$$
+$$\text{Provider Fee} = \text{Paystack Fee (1.5\% capped at ₦2,000.00)}$$
+$$\text{Platform Fee} = \text{Gross Amount} \times \left(\frac{\text{Pool.platformFeePercent}}{100}\right)$$
 $$\text{Tax} = 0.00$$
 $$\text{Distributable Amount} = \max(0, \text{Gross} - \text{ProviderFee} - \text{PlatformFee} - \text{Tax})$$
-$$\text{Collaborator Allocation} = \text{Distributable Amount} \times \left(\frac{\text{Collaborator.splitPercentage}}{100}\right)$$
+$$\text{Collaborator Allocation} = \text{Distributable Amount} \times \left(\frac{\text{Member.splitPercentage}}{100}\right)$$
 
-*Note:* Minor unit remainders are assigned to the final collaborator to guarantee exact 100% distribution without loss.
+> **Remainder Guard:** Any odd kobo remainder from integer division is assigned to the member with the highest percentage split, guaranteeing 100% allocation without financial drift.
 
 ---
 
 ## 3. Database Schema Models
 
-* **`Payment`**: Stores payment links, tokens, expected amounts, actual amounts, Paystack reference, and status (`PENDING`, `SUCCESSFUL`, `FAILED`).
-* **`SplitSnapshot`**: Freezes team roles, split percentages, and fee rules at payment confirmation time so future team edits never alter past revenue.
-* **`ProjectAccount`**: Virtual wallet ledger tracking `totalReceived`, `totalDisbursed`, and `currentBalance`.
-* **`PayoutTransaction`**: Individual team collaborator allocations and withdrawals waiting for/executing disbursement (`PENDING`, `PROCESSING`, `SUCCESSFUL`, `FAILED`).
-* **`WebhookEvent`**: Stores raw webhook payloads and guarantees idempotent processing (`providerEventId`).
-* **`AuditLog`**: Stores immutable event log with `entityType: "LEDGER_ENTRY"` or `"FINANCIAL_EVENT"`.
+- **`payment_links`**: Active payment links generated for a pool containing `token`, `title`, `amount`, `currency`, and `isActive`.
+- **`transactions`**: Payment records tracking `providerReference`, `amount`, `currency`, `status` (`PENDING`, `SUCCESSFUL`, `FAILED`), and `payerEmail`.
+- **`split_snapshots`**: Immutable records created at payment confirmation time freezing team split percentages, fees, and distributable amounts.
+- **`split_allocations`**: Individual member monetary shares linked to a `split_snapshot`.
+- **`withdrawals`**: Member payout requests tracking `amount`, `bankCode`, `accountNumber`, `accountName`, `providerReference`, `status` (`PENDING`, `PROCESSING`, `SUCCESSFUL`, `FAILED`, `REVERSED`), and `failureReason`.
+- **`notifications`**: User-facing in-app notifications generated for `PAYMENT_ALLOCATED`, `WITHDRAWAL_REQUESTED`, `WITHDRAWAL_SUCCESS`, and `WITHDRAWAL_FAILED`.
+- **`audit_log`**: Immutable operational log tracking system and user events with unique idempotency constraints on webhooks.
 
 ---
 
 ## 4. API Endpoints Reference
 
-### 1. Get Payment Link Public Details
-* **Method & Route:** `GET /api/payments/link/:token`
+### Public Checkout & Payments (Unauthenticated)
+
+#### 1. Get Payment Link Checkout Data
+* **Method & Route:** `GET /api/pay/:token`
 * **Auth Required:** No (Public)
 * **Response (`200 OK`):**
   ```json
   {
     "data": {
-      "id": "pmt_12345",
-      "projectId": "proj_67890",
-      "paymentLinkToken": "abc123token",
-      "expectedAmount": "10000.00",
+      "id": "link_12345",
+      "token": "a1b",
+      "title": "Website Design Deposit",
+      "description": "Initial 50% deposit for web redesign",
+      "amount": 50000,
       "currency": "NGN",
-      "provider": "paystack",
-      "status": "PENDING"
-    }
-  }
-  ```
-
----
-
-### 2. Initialize Paystack Checkout
-* **Method & Route:** `POST /api/payments/pay/:token/initialize`  
-  *(Alias: `POST /api/payments/initialize/:token`)*
-* **Auth Required:** No (Public)
-* **Request Body:**
-  ```json
-  {
-    "email": "client@example.com",
-    "callbackUrl": "https://yourdomain.com/pay/verify"
-  }
-  ```
-* **Response (`200 OK`):**
-  ```json
-  {
-    "data": {
-      "authorizationUrl": "https://checkout.paystack.com/3M8x...",
-      "reference": "sp_pmt_12345_1727063000",
-      "payment": {
-        "id": "pmt_12345",
-        "expectedAmount": "10000.00",
-        "status": "PENDING"
+      "pool": {
+        "id": "pool_67890",
+        "name": "Acme Web Redesign",
+        "description": "Client redesign project",
+        "currency": "NGN"
       }
     }
   }
   ```
 
----
-
-### 3. Calculate Financial Chain Preview
-* **Method & Route:** `POST /api/payments/calculate`
-* **Auth Required:** No (Public preview)
+#### 2. Initialize Payment Checkout
+* **Method & Route:** `POST /api/pay/:token/initialize`
+* **Auth Required:** No (Public)
 * **Request Body:**
   ```json
   {
-    "amount": 10000,
-    "platformFeePercent": 2.5,
-    "providerFee": 150,
-    "collaborators": [
-      { "id": "c1", "userId": "u1", "role": "Developer", "splitPercentage": 60 },
-      { "id": "c2", "userId": "u2", "role": "Designer", "splitPercentage": 40 }
-    ]
+    "payerEmail": "client@example.com",
+    "payerName": "Jane Doe"
   }
   ```
 * **Response (`200 OK`):**
   ```json
   {
     "data": {
-      "grossAmount": 10000,
-      "providerFee": 150,
-      "platformFee": 250,
-      "tax": 0,
-      "distributableAmount": 9600,
-      "collaboratorAllocations": [
-        { "collaboratorId": "c1", "userId": "u1", "role": "Developer", "splitPercentage": 60, "amount": 5760 },
-        { "collaboratorId": "c2", "userId": "u2", "role": "Designer", "splitPercentage": 40, "amount": 3840 }
-      ]
-    }
+      "transactionId": "tx_998877",
+      "reference": "SPLIT-1727063000-A1B2",
+      "amount": 50000,
+      "amountMinor": 5000000,
+      "currency": "NGN",
+      "payerEmail": "client@example.com",
+      "payerName": "Jane Doe",
+      "poolName": "Acme Web Redesign"
+    },
+    "message": "Payment initialized successfully"
   }
   ```
 
----
-
-### 4. Verify Payment Transaction & Trigger Financial Chain
+#### 3. Verify Payment & Trigger Split Execution
 * **Method & Route:** `GET /api/payments/verify/:reference`
 * **Auth Required:** No (Public verification)
 * **Response (`200 OK`):**
   ```json
   {
     "data": {
-      "payment": {
-        "id": "pmt_12345",
+      "transaction": {
+        "id": "tx_998877",
+        "reference": "SPLIT-1727063000-A1B2",
+        "amount": 50000,
+        "currency": "NGN",
         "status": "SUCCESSFUL",
-        "actualAmount": "10000.00",
-        "paidAt": "2026-09-23T03:50:00.000Z"
+        "paidAt": "2026-09-27T10:00:00.000Z"
       },
       "breakdown": {
-        "grossAmount": 10000,
-        "providerFee": 150,
-        "platformFee": 250,
+        "grossAmount": 50000,
+        "providerFee": 750,
+        "platformFee": 0,
         "tax": 0,
-        "distributableAmount": 9600,
+        "distributableAmount": 49250,
         "collaboratorAllocations": [
-          { "collaboratorId": "collab_1", "userId": "usr_alice", "role": "Lead Engineer", "splitPercentage": 60, "amount": 5760 },
-          { "collaboratorId": "collab_2", "userId": "usr_bob", "role": "Designer", "splitPercentage": 40, "amount": 3840 }
+          { "collaboratorId": "pm_1", "userId": "u_alice", "role": "Developer", "splitPercentage": 60, "amount": 29550 },
+          { "collaboratorId": "pm_2", "userId": "u_bob", "role": "Designer", "splitPercentage": 40, "amount": 19700 }
         ]
       }
     }
@@ -185,135 +159,232 @@ $$\text{Collaborator Allocation} = \text{Distributable Amount} \times \left(\fra
 
 ---
 
-### 5. Get Project Financial Balance Summary
-* **Method & Route:** `GET /api/projects/:id/balance`
-* **Auth Required:** Yes (`Bearer Token`)
+### Pool Payment Links Management (Authenticated)
+
+#### 4. List Payment Links for Pool
+* **Method & Route:** `GET /api/pools/:poolId/payment-links`
+* **Auth Required:** Yes (`Bearer Token` — Member or Owner)
 * **Response (`200 OK`):**
   ```json
   {
-    "data": {
-      "projectId": "proj_123",
-      "totalReceived": 10000,
-      "totalDisbursed": 3000,
-      "currentBalance": 7000,
-      "currency": "USD",
-      "collaboratorBreakdown": {
-        "collab_1": {
-          "role": "Developer",
-          "allocated": 5760,
-          "withdrawn": 3000,
-          "available": 2760
-        }
+    "data": [
+      {
+        "id": "link_12345",
+        "poolId": "pool_67890",
+        "token": "a1b",
+        "title": "Website Design Deposit",
+        "description": "Initial deposit",
+        "amount": 50000,
+        "currency": "NGN",
+        "isActive": true,
+        "createdAt": "2026-09-27T08:00:00.000Z"
       }
-    }
+    ]
   }
   ```
 
----
-
-### 6. Request Member Withdrawal / Payout
-* **Method & Route:** `POST /api/payouts/withdraw`
-* **Auth Required:** Yes (`Bearer Token`)
+#### 5. Create Payment Link
+* **Method & Route:** `POST /api/pools/:poolId/payment-links`
+* **Auth Required:** Yes (`Bearer Token` — Pool Owner only)
 * **Request Body:**
   ```json
   {
-    "collaboratorId": "collab_1",
-    "amount": 2500,
-    "accountName": "Alice Johnson",
-    "accountNumber": "0123456789",
-    "bankCode": "057"
+    "title": "Final Milestone Payment",
+    "amount": 75000,
+    "description": "Completion payment",
+    "currency": "NGN"
   }
   ```
 * **Response (`201 Created`):**
   ```json
   {
     "data": {
-      "id": "payout_987",
-      "paymentId": "pmt_12345",
-      "collaboratorId": "collab_1",
-      "amount": "2500.00",
+      "id": "link_999",
+      "poolId": "pool_67890",
+      "token": "x9z",
+      "title": "Final Milestone Payment",
+      "amount": 75000,
       "currency": "NGN",
-      "status": "SUCCESSFUL",
-      "providerReference": "wth_collab_1_1727065000",
-      "completedAt": "2026-09-23T20:30:00.000Z"
-    }
+      "isActive": true,
+      "createdAt": "2026-09-27T10:10:00.000Z"
+    },
+    "message": "Payment link created successfully"
   }
   ```
 
 ---
 
-### 7. Paystack Webhook Receiver
-* **Method & Route:** `POST /api/webhooks/paystack`
-* **Headers Required:** `x-paystack-signature` (HMAC-SHA512)
+### Pool Balances & Financial Ledger (Authenticated)
+
+#### 6. Get Pool Financial Balance Summary
+* **Method & Route:** `GET /api/pools/:poolId/balance`
+* **Auth Required:** Yes (`Bearer Token` — Member or Owner)
 * **Response (`200 OK`):**
   ```json
   {
-    "processed": true,
-    "message": "Webhook processed successfully"
+    "data": {
+      "poolId": "pool_67890",
+      "currency": "NGN",
+      "totalReceived": 100000,
+      "totalDisbursed": 20000,
+      "currentBalance": 80000,
+      "memberBalances": [
+        {
+          "poolMemberId": "pm_1",
+          "userId": "usr_alice",
+          "allocatedBalance": 60000,
+          "withdrawnAmount": 20000,
+          "availableBalance": 40000
+        },
+        {
+          "poolMemberId": "pm_2",
+          "userId": "usr_bob",
+          "allocatedBalance": 40000,
+          "withdrawnAmount": 0,
+          "availableBalance": 40000
+        }
+      ]
+    }
   }
   ```
+
+#### 7. Get Pool Allocations History
+* **Method & Route:** `GET /api/pools/:poolId/allocations`
+* **Auth Required:** Yes (`Bearer Token` — Member or Owner)
+
+#### 8. Get Pool Transactions History
+* **Method & Route:** `GET /api/pools/:poolId/transactions`
+* **Auth Required:** Yes (`Bearer Token` — Member or Owner)
+
+---
+
+### Member Withdrawals / Payouts (Authenticated)
+
+#### 9. Request Member Withdrawal
+* **Method & Route:** `POST /api/pools/:poolId/withdrawals`
+* **Auth Required:** Yes (`Bearer Token` — Member or Owner)
+* **Request Body:**
+  ```json
+  {
+    "amount": 15000,
+    "bankCode": "057",
+    "accountNumber": "0123456789",
+    "accountName": "Alice Johnson"
+  }
+  ```
+* **Response (`201 Created` / `200 OK`):**
+  ```json
+  {
+    "data": {
+      "id": "wdr_776655",
+      "poolId": "pool_67890",
+      "poolMemberId": "pm_1",
+      "amount": 15000,
+      "currency": "NGN",
+      "status": "PROCESSING",
+      "providerReference": "TRF_123456789",
+      "bankCode": "057",
+      "accountNumber": "0123456789",
+      "accountName": "Alice Johnson",
+      "failureReason": null,
+      "createdAt": "2026-09-27T10:12:00.000Z"
+    },
+    "message": "Withdrawal request submitted successfully"
+  }
+  ```
+
+#### 10. List Pool Withdrawals
+* **Method & Route:** `GET /api/pools/:poolId/withdrawals`
+* **Auth Required:** Yes (`Bearer Token` — Members see their own; Owner sees all)
+
+#### 11. Get Single Withdrawal Details
+* **Method & Route:** `GET /api/pools/:poolId/withdrawals/:withdrawalId`
+* **Auth Required:** Yes (`Bearer Token`)
+
+---
+
+### Webhooks (Paystack Server-to-Server)
+
+#### 12. Paystack Webhook Event Handler
+* **Method & Route:** `POST /api/webhooks/paystack`
+* **Headers:** `x-paystack-signature` (HMAC-SHA512 verification)
+* **Events Handled:** `charge.success`, `transfer.success`, `transfer.failed`, `transfer.reversed`
 
 ---
 
 ## 5. Frontend Integration Guide (For Abraham)
 
-### Flow 1: Client Checkout Page (`/pay/[token]`)
+### Flow 1: Public Checkout Page (`/pay/[token]`)
 
-1. User visits `/pay/[token]`.
-2. Fetch payment details using `GET /api/payments/link/[token]`.
-3. Display project name, expected amount, and email input form.
-4. On submit, call `POST /api/payments/pay/[token]/initialize`:
+1. User opens `/pay/[token]`.
+2. Execute `GET /api/pay/[token]`:
+   - Render project name, link title, description, amount, and currency.
+3. User enters email (and optional name) and clicks "Pay Now".
+4. Call `POST /api/pay/[token]/initialize`:
    ```typescript
-   const res = await fetch(`/api/payments/pay/${token}/initialize`, {
+   const res = await fetch(`/api/pay/${token}/initialize`, {
      method: 'POST',
      headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({ email: clientEmail, callbackUrl: `${window.location.origin}/pay/verify` }),
+     body: JSON.stringify({ payerEmail: email, payerName: name }),
    });
    const { data } = await res.json();
-
-   // Redirect client to Paystack Checkout URL
-   window.location.href = data.authorizationUrl;
    ```
+5. Use Paystack Popup / Inline SDK using `data.reference` & `data.amountMinor` or redirect to Paystack authorization.
 
 ---
 
-### Flow 2: Payment Verification Page (`/pay/verify`)
+### Flow 2: Payment Verification & Success Page (`/pay/verify`)
 
-1. Paystack redirects back to `callbackUrl?trxref=sp_...&reference=sp_...`.
-2. Extract `reference` query param.
-3. Call verification endpoint `GET /api/payments/verify/[reference]`:
+1. Extract `reference` from query parameter `?reference=SPLIT-...`.
+2. Execute `GET /api/payments/verify/[reference]`:
    ```typescript
    const res = await fetch(`/api/payments/verify/${reference}`);
    const { data } = await res.json();
 
-   if (data.payment.status === 'SUCCESSFUL') {
-     // Show Success UI with breakdown (grossAmount, distributableAmount, allocations)
+   if (data.transaction.status === 'SUCCESSFUL') {
+     // Render payment success screen with financial breakdown:
+     // - Gross Amount: data.breakdown.grossAmount
+     // - Provider Fee: data.breakdown.providerFee
+     // - Distributable Amount: data.breakdown.distributableAmount
+     // - Collaborator Allocations: data.breakdown.collaboratorAllocations
    }
    ```
 
 ---
 
-### Flow 3: Collaborator Withdrawal Page (`/pools/[poolId]/withdrawals`)
+### Flow 3: Pool Financial Dashboard (`/pools/[poolId]`)
 
-1. Fetch balance summary using `GET /api/projects/[projectId]/balance`.
-2. Display `available` balance for the logged-in collaborator.
-3. On withdrawal submit:
+1. Execute `GET /api/pools/[poolId]/balance`:
+   - Display `totalReceived`, `totalDisbursed`, and `currentBalance`.
+   - Filter `memberBalances` to show the logged-in user's `allocatedBalance`, `withdrawnAmount`, and `availableBalance`.
+2. Execute `GET /api/pools/[poolId]/transactions` to show recent payments.
+3. Execute `GET /api/pools/[poolId]/payment-links` to show active payment links.
+
+---
+
+### Flow 4: Member Payout / Withdrawal (`/pools/[poolId]/withdrawals`)
+
+1. Fetch available balance from `GET /api/pools/[poolId]/balance`.
+2. Member inputs withdrawal amount, bank code, account number, and account name.
+3. Validate client-side that `amount <= memberBalance.availableBalance`.
+4. Call `POST /api/pools/[poolId]/withdrawals`:
    ```typescript
-   const res = await fetch('/api/payouts/withdraw', {
+   const res = await fetch(`/api/pools/${poolId}/withdrawals`, {
      method: 'POST',
      headers: {
        'Content-Type': 'application/json',
-       'Authorization': `Bearer ${token}`
+       'Authorization': `Bearer ${userToken}`,
      },
      body: JSON.stringify({
-       collaboratorId: userCollaboratorId,
-       amount: requestedAmount,
-       accountNumber: bankAccount,
-       bankCode: selectedBankCode
-     })
+       amount: Number(requestedAmount),
+       bankCode: selectedBankCode,
+       accountNumber: accNo,
+       accountName: accName,
+     }),
    });
    const { data } = await res.json();
    ```
+5. Display status badge (`PROCESSING`, `SUCCESSFUL`, or `FAILED`).
 
 ---
 
@@ -328,4 +399,7 @@ PAYSTACK_SECRET_KEY="sk_test_..."
 PAYSTACK_PUBLIC_KEY="pk_test_..."
 ```
 
-> **Note:** If `PAYSTACK_SECRET_KEY` is not set or uses the placeholder `sk_test_placeholder`, the system automatically runs in **Mock Development Mode**, returning test checkout URLs and mock successful verifications/transfers out-of-the-box.
+### Running Automated Financial Tests
+- Smoke Tests: `npx tsx src/tests/financial-smoke.test.ts`
+- Validation Tests: `npx tsx src/tests/financial-validation.test.ts`
+- Build Verification: `npm run build`
