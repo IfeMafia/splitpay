@@ -25,6 +25,9 @@ router.use(authenticate);
 router.post('/', validateBody(createProjectSchema), projectController.createProject);
 router.get('/', projectController.getProjects);
 router.get('/:id', projectController.getProject);
+router.get('/:id/balance', projectController.getProjectBalance);
+router.get('/:id/allocations', projectController.getProjectAllocations);
 router.patch('/:id', validateBody(updateProjectSchema), projectController.updateProject);
 
 export default router;
+

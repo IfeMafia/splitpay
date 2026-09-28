@@ -20,6 +20,15 @@ export async function getPaymentPayouts(req: AuthenticatedRequest, res: Response
   }
 }
 
+export async function requestWithdrawal(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const withdrawal = await payoutService.requestWithdrawal(req.body);
+    res.status(201).json({ data: withdrawal });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function retryPayout(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const payout = await payoutService.retryPayoutTransaction(req.params.id as string);
@@ -28,3 +37,4 @@ export async function retryPayout(req: AuthenticatedRequest, res: Response, next
     next(err);
   }
 }
+

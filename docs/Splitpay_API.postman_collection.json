@@ -1,0 +1,874 @@
+{
+  "info": {
+    "_postman_id": "8d227b23-1cb4-49c7-9524-1064560a28b6",
+    "name": "Splitpay API",
+    "description": "Comprehensive Postman collection for testing Splitpay backend tasks (S1-S11). Includes automated token extraction script on login/register.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjNhMzFjOTNlLTUwMDAtNGNlMS04ZGQ3LTA0MDliNTJiOThhZCIsImVtYWlsIjoic2Fta2llbEBzcGxpdHBheS5sb2NhbCIsImlhdCI6MTc5MDE4MjQzMSwiZXhwIjoxNzkwNzg3MjMxfQ.s1KfRk1RQodYyrw3mlW-E7R_J_ffnQPORsBiiiaVFc0",
+      "type": "string"
+    },
+    {
+      "key": "poolId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "inviteToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paymentToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "linkId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Authentication (S2)",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "    pm.collectionVariables.set('token', res.data.token);",
+                  "    console.log('Saved token to collection variable: token');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"samkiel@splitpay.local\",\n  \"password\": \"SuperSecurePassword123!\",\n  \"fullName\": \"Samkiel Dev\",\n  \"defaultCurrency\": \"NGN\",\n  \"country\": \"NG\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "    pm.collectionVariables.set('token', res.data.token);",
+                  "    console.log('Saved token to collection variable: token');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"samkiel@splitpay.local\",\n  \"password\": \"SuperSecurePassword123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Current User Profile",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            }
+          }
+        },
+        {
+          "name": "Update User Profile",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Samkiel Lead Architect\",\n  \"phone\": \"+2348012345678\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Pools & Members (S4)",
+      "item": [
+        {
+          "name": "Create Pool",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.id) {",
+                  "    pm.collectionVariables.set('poolId', res.data.id);",
+                  "    console.log('Saved poolId:', res.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Website Redesign Client Pool\",\n  \"description\": \"Client payment for website design and backend API delivery\",\n  \"currency\": \"NGN\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools"]
+            }
+          }
+        },
+        {
+          "name": "Get User Pools",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools"]
+            }
+          }
+        },
+        {
+          "name": "Get Pool Details",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Pool",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Website & App Redesign Pool\",\n  \"description\": \"Updated scope\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Pool Members",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/members",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "members"]
+            }
+          }
+        },
+        {
+          "name": "Add Member Directly",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"abraham@splitpay.local\",\n  \"role\": \"MEMBER\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/members",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "members"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Invitations (S5)",
+      "item": [
+        {
+          "name": "Generate Invite Code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "    pm.collectionVariables.set('inviteToken', res.data.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expiresInDays\": 7\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/invitations/code",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "invitations", "code"]
+            }
+          }
+        },
+        {
+          "name": "Dispatch Email Invitation",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"tobi@splitpay.local\",\n  \"expiresInDays\": 7\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/invitations/email",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "invitations", "email"]
+            }
+          }
+        },
+        {
+          "name": "List Pool Invitations",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/invitations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "invitations"]
+            }
+          }
+        },
+        {
+          "name": "Public Preview Invitation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/invitations/{{inviteToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "invitations", "{{inviteToken}}"]
+            }
+          }
+        },
+        {
+          "name": "Accept Invitation (Authenticated)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/invitations/{{inviteToken}}/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "invitations", "{{inviteToken}}", "accept"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Payment Links & Checkout (S6)",
+      "item": [
+        {
+          "name": "Create Payment Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "    pm.collectionVariables.set('paymentToken', res.data.token);",
+                  "    pm.collectionVariables.set('linkId', res.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Website Project Milestone 1\",\n  \"description\": \"50% upfront payment for website redesign\",\n  \"amount\": 150000,\n  \"currency\": \"NGN\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/payment-links",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "payment-links"]
+            }
+          }
+        },
+        {
+          "name": "List Pool Payment Links",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/payment-links",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "payment-links"]
+            }
+          }
+        },
+        {
+          "name": "Public Guest Checkout Data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pay/{{paymentToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pay", "{{paymentToken}}"]
+            }
+          }
+        },
+        {
+          "name": "Public Guest Payment Initialization",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payerEmail\": \"client@acme.corp\",\n  \"payerName\": \"Acme Corp Finance\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pay/{{paymentToken}}/initialize",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pay", "{{paymentToken}}", "initialize"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Split Engine & Balances (S7)",
+      "item": [
+        {
+          "name": "Get Split Configuration",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/split",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "split"]
+            }
+          }
+        },
+        {
+          "name": "Configure Equal Split",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"EQUAL\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/split",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "split"]
+            }
+          }
+        },
+        {
+          "name": "Get Allocations",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/allocations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "allocations"]
+            }
+          }
+        },
+        {
+          "name": "Get Pool Balance",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "balance"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Transactions & Notifications (S8)",
+      "item": [
+        {
+          "name": "Get Pool Transactions",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "transactions"]
+            }
+          }
+        },
+        {
+          "name": "Get User Notifications",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications"]
+            }
+          }
+        },
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/read-all",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications", "read-all"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Withdrawals (S9)",
+      "item": [
+        {
+          "name": "Request Withdrawal",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 25000,\n  \"bankCode\": \"058\",\n  \"accountNumber\": \"0123456789\",\n  \"accountName\": \"Samkiel Dev\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/withdrawals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "withdrawals"]
+            }
+          }
+        },
+        {
+          "name": "Get Pool Withdrawals",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/pools/{{poolId}}/withdrawals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "pools", "{{poolId}}", "withdrawals"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

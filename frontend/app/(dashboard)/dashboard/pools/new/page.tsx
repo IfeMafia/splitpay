@@ -10,7 +10,6 @@ type State = "idle" | "submitting" | "error";
 interface FieldError {
   name?: string;
   description?: string;
-  totalAmount?: string;
   currency?: string;
 }
 
@@ -21,14 +20,11 @@ const CURRENCIES = [
   { code: "EUR", label: "EUR — Euro" },
 ];
 
-function validate(fields: { name: string; description: string; totalAmount: string; currency: string }): FieldError {
+function validate(fields: { name: string; description: string; currency: string }): FieldError {
   const errors: FieldError = {};
   if (!fields.name.trim()) errors.name = "Pool name is required.";
   else if (fields.name.trim().length < 3) errors.name = "Name must be at least 3 characters.";
   if (fields.description.length > 300) errors.description = "Description must be 300 characters or fewer.";
-  if (!fields.totalAmount) errors.totalAmount = "Expected amount is required.";
-  else if (isNaN(Number(fields.totalAmount)) || Number(fields.totalAmount) <= 0)
-    errors.totalAmount = "Enter a valid positive amount.";
   if (!fields.currency) errors.currency = "Select a currency.";
   return errors;
 }
@@ -39,7 +35,6 @@ export default function CreatePoolPage() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
   const [currency, setCurrency] = useState("NGN");
   const [errors, setErrors] = useState<FieldError>({});
   const [state, setState] = useState<State>("idle");
@@ -48,15 +43,15 @@ export default function CreatePoolPage() {
 
   const touch = (field: string) => setTouched(t => ({ ...t, [field]: true }));
 
-  const liveErrors = touched.name || touched.description || touched.totalAmount
-    ? validate({ name, description, totalAmount, currency })
+  const liveErrors = touched.name || touched.description
+    ? validate({ name, description, currency })
     : {};
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const allTouched = { name: true, description: true, totalAmount: true, currency: true };
+    const allTouched = { name: true, description: true, currency: true };
     setTouched(allTouched);
-    const errs = validate({ name, description, totalAmount, currency });
+    const errs = validate({ name, description, currency });
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
@@ -67,10 +62,9 @@ export default function CreatePoolPage() {
       const project = await api.post<{ id: string }>("/projects", {
         name: name.trim(),
         description: description.trim() || undefined,
-        totalAmount: Number(totalAmount),
         currency,
       });
-      router.push(`/dashboard/pools/${project.id}`);
+      router.push(`/dashboard/pools/${project.id}/members`);
     } catch (err: unknown) {
       setState("error");
       setServerError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -181,38 +175,8 @@ export default function CreatePoolPage() {
           />
         </Field>
 
-        {/* Amount + Currency in a row */}
-        <div className="pool-amount-row" style={{ display: "grid", gridTemplateColumns: "1fr 160px", gap: 12 }}>
+        <div className="pool-amount-row" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
           <style>{`@media (max-width: 480px) { .pool-amount-row { grid-template-columns: 1fr !important; } }`}</style>
-
-          <Field
-            label="Expected amount"
-            hint="The total payment amount you expect from your client."
-            error={liveErrors.totalAmount}
-          >
-            <div style={{ position: "relative" }}>
-              <span style={{
-                position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
-                fontSize: 13, color: "#999", pointerEvents: "none", fontFamily: "var(--font-mono)",
-              }}>
-                {currency === "NGN" ? "₦" : currency === "USD" ? "$" : currency === "GBP" ? "£" : "€"}
-              </span>
-              <input
-                id="pool-amount"
-                type="number"
-                min="1"
-                step="any"
-                value={totalAmount}
-                onChange={e => setTotalAmount(e.target.value)}
-                onBlur={() => touch("totalAmount")}
-                placeholder="0.00"
-                disabled={isSubmitting}
-                style={{ ...inputStyle(!!liveErrors.totalAmount), paddingLeft: 30, fontFamily: "var(--font-mono)" }}
-                onFocus={e => applyFocus(e, !!liveErrors.totalAmount)}
-                onBlurCapture={e => removeFocus(e, !!liveErrors.totalAmount)}
-              />
-            </div>
-          </Field>
 
           <Field label="Currency" error={liveErrors.currency}>
             <div style={{ position: "relative" }}>

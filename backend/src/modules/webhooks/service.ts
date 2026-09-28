@@ -1,23 +1,213 @@
 import { prisma } from '../../lib/prisma';
-import { WebhookPayloadDto } from './types';
+import { verifyPaystackWebhookSignature } from '../../lib/paystack';
+import { confirmPaymentTransaction } from '../payments/ledger.service';
+import { AppError } from '../../middleware/errorHandler';
+import { Prisma, WithdrawalStatus } from '@prisma/client';
+import { sendEmail } from '../../lib/mailer';
+import { formatWithdrawalSuccessEmail } from '../../lib/emailTemplates';
 
-/**
- * TODO: Verify cryptographic signature of incoming webhook (Stripe signature / Paystack signature).
- * TODO: Perform idempotent processing using `providerEventId` to prevent duplicate handling.
- * TODO: Handle payment completion events (update Payment status to SUCCESSFUL, trigger payouts).
- * TODO: Handle transfer completion/failure events (update PayoutTransaction status).
- */
-export async function processWebhookEvent(dto: WebhookPayloadDto): Promise<void> {
-  // Save raw event for auditability
-  const event = await prisma.webhookEvent.create({
-    data: {
-      provider: dto.provider,
-      eventType: dto.eventType,
-      providerEventId: dto.providerEventId,
-      rawPayload: dto.rawPayload,
-    },
-  });
+export interface WebhookPayloadDto {
+  provider: string;
+  eventType: string;
+  providerEventId: string;
+  rawPayload: any;
+}
 
-  // TODO: Dispatch domain handler based on event.eventType
-  console.log(`[Webhook Received] ${event.provider}:${event.eventType}`);
+export async function processWebhookEvent(
+  dto: WebhookPayloadDto,
+  signatureHeader?: string,
+  rawBody?: string | Buffer
+): Promise<{ processed: boolean; message: string }> {
+  // 1. Signature Verification for Paystack
+  if (dto.provider === 'paystack') {
+    if (rawBody && signatureHeader) {
+      const isValid = await verifyPaystackWebhookSignature(rawBody, signatureHeader);
+      if (!isValid) {
+        throw new AppError(401, 'Invalid Paystack webhook signature', 'UNAUTHORIZED');
+      }
+    }
+  }
+
+  // 2. Idempotency Guard: reserve event processing row (unique in DB for WEBHOOK + event id)
+  let webhookAuditLog: { id: string };
+  try {
+    webhookAuditLog = await prisma.auditLog.create({
+      data: {
+        entityType: 'WEBHOOK',
+        entityId: dto.providerEventId,
+        action: 'WEBHOOK_PROCESSING',
+        metadata: {
+          provider: dto.provider,
+        },
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return { processed: true, message: 'Event already processed (Idempotent)' };
+    }
+    throw error;
+  }
+
+  try {
+    // 3. Event Dispatcher
+    if (dto.provider === 'paystack') {
+      if (dto.eventType === 'charge.success') {
+        const reference = dto.rawPayload?.data?.reference;
+        if (reference) {
+          await confirmPaymentTransaction(reference);
+        }
+      } else if (dto.eventType === 'transfer.success') {
+        const reference = dto.rawPayload?.data?.reference;
+        const transferCode = dto.rawPayload?.data?.transfer_code;
+        const withdrawalId = reference?.startsWith('wdr_') ? reference.replace('wdr_', '') : null;
+
+        const withdrawal = await prisma.withdrawal.findFirst({
+          where: {
+            OR: [
+              ...(withdrawalId ? [{ id: withdrawalId }] : []),
+              ...(reference ? [{ providerReference: reference }] : []),
+              ...(transferCode ? [{ providerReference: transferCode }] : []),
+            ],
+          },
+          include: { pool: true, poolMember: { include: { user: true } } },
+        });
+
+        if (withdrawal) {
+          await prisma.$transaction(async (tx) => {
+            await tx.withdrawal.update({
+              where: { id: withdrawal.id },
+              data: { status: WithdrawalStatus.SUCCESSFUL },
+            });
+
+            await tx.withdrawalEvent.create({
+              data: {
+                withdrawalId: withdrawal.id,
+                eventType: 'WITHDRAWAL_SUCCESS',
+                data: { reference, transferCode, rawData: dto.rawPayload?.data },
+              },
+            });
+
+            await tx.notification.create({
+              data: {
+                userId: withdrawal.poolMember.userId,
+                title: 'Withdrawal Successful',
+                message: `Your withdrawal of ${withdrawal.currency} ${withdrawal.amount} has been successfully processed.`,
+                type: 'WITHDRAWAL_SUCCESS',
+                data: { withdrawalId: withdrawal.id, poolId: withdrawal.poolId },
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                entityType: 'WITHDRAWAL',
+                entityId: withdrawal.id,
+                action: 'WITHDRAWAL_SUCCESS',
+                metadata: { reference, transferCode },
+              },
+            });
+          });
+
+          // Send confirmation email
+          if (withdrawal.poolMember?.user?.email) {
+            try {
+              const emailContent = formatWithdrawalSuccessEmail({
+                userName: withdrawal.poolMember.user.fullName || withdrawal.poolMember.user.email,
+                poolName: withdrawal.pool.name,
+                amount: Number(withdrawal.amount),
+                currency: withdrawal.currency,
+                accountName: withdrawal.accountName || 'Bank Account',
+                accountNumber: withdrawal.accountNumber || '••••',
+                withdrawalId: withdrawal.id,
+              });
+              await sendEmail({
+                to: withdrawal.poolMember.user.email,
+                subject: emailContent.subject,
+                html: emailContent.html,
+                text: emailContent.text,
+              });
+            } catch (emailErr) {
+              console.error('[Mailer Error] Failed to send withdrawal success email:', emailErr);
+            }
+          }
+        }
+      } else if (dto.eventType === 'transfer.failed' || dto.eventType === 'transfer.reversed') {
+        const reference = dto.rawPayload?.data?.reference;
+        const transferCode = dto.rawPayload?.data?.transfer_code;
+        const failureReason = dto.rawPayload?.data?.reason || 'Transfer failed';
+        const withdrawalId = reference?.startsWith('wdr_') ? reference.replace('wdr_', '') : null;
+
+        const withdrawal = await prisma.withdrawal.findFirst({
+          where: {
+            OR: [
+              ...(withdrawalId ? [{ id: withdrawalId }] : []),
+              ...(reference ? [{ providerReference: reference }] : []),
+              ...(transferCode ? [{ providerReference: transferCode }] : []),
+            ],
+          },
+          include: { poolMember: true },
+        });
+
+        if (withdrawal) {
+          const newStatus = dto.eventType === 'transfer.reversed' ? WithdrawalStatus.REVERSED : WithdrawalStatus.FAILED;
+
+          await prisma.$transaction(async (tx) => {
+            await tx.withdrawal.update({
+              where: { id: withdrawal.id },
+              data: {
+                status: newStatus,
+                failureReason,
+              },
+            });
+
+            await tx.withdrawalEvent.create({
+              data: {
+                withdrawalId: withdrawal.id,
+                eventType: dto.eventType === 'transfer.reversed' ? 'WITHDRAWAL_REVERSED' : 'WITHDRAWAL_FAILED',
+                data: { reason: failureReason, reference, transferCode },
+              },
+            });
+
+            await tx.notification.create({
+              data: {
+                userId: withdrawal.poolMember.userId,
+                title: dto.eventType === 'transfer.reversed' ? 'Withdrawal Reversed' : 'Withdrawal Failed',
+                message: `Your withdrawal of ${withdrawal.currency} ${withdrawal.amount} failed. Reason: ${failureReason}`,
+                type: 'WITHDRAWAL_FAILED',
+                data: { withdrawalId: withdrawal.id, poolId: withdrawal.poolId, reason: failureReason },
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                entityType: 'WITHDRAWAL',
+                entityId: withdrawal.id,
+                action: dto.eventType === 'transfer.reversed' ? 'WITHDRAWAL_REVERSED' : 'WITHDRAWAL_FAILED',
+                metadata: { reason: failureReason, reference, transferCode },
+              },
+            });
+          });
+        }
+      }
+    }
+
+    // 4. Finalize audit log
+    await prisma.auditLog.update({
+      where: { id: webhookAuditLog.id },
+      data: {
+        action: dto.eventType,
+        metadata: {
+          provider: dto.provider,
+          rawPayload: dto.rawPayload as any,
+        },
+      },
+    });
+  } catch (error) {
+    await prisma.auditLog.deleteMany({
+      where: { id: webhookAuditLog.id, entityType: 'WEBHOOK', action: 'WEBHOOK_PROCESSING' },
+    });
+    throw error;
+  }
+
+  return { processed: true, message: 'Webhook processed successfully' };
 }

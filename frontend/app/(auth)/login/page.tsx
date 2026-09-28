@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { setToken } from "../../lib/auth";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { setToken, setUser, isAuthenticated } from "../../lib/auth";
+import GoogleAuthButton from "@/app/components/GoogleAuthButton";
+import { toast } from "@/app/components/Toast";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api";
 
@@ -13,31 +15,53 @@ interface LoginResult {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div style={{ width: "100%", padding: 40, textAlign: "center" }}><Spinner /></div>}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get("redirect") || "/dashboard";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      router.replace(redirectUrl);
+    }
+  }, [router, redirectUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password) return;
     setLoading(true);
-    setError("");
 
     try {
-      const res = await fetch(`${BASE_URL}/users/login`, {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.message ?? `Error ${res.status}`);
-      const data: LoginResult = body.data;
-      setToken(data.token);
-      router.replace("/dashboard");
+      const token = body.data?.token || body.token;
+      if (!token) throw new Error("No authentication token returned");
+      setToken(token);
+      const userData = body.data?.user || body.user;
+      if (userData) {
+        setUser(userData);
+      }
+      toast.success("Signed in successfully!");
+      router.replace(redirectUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed. Please try again.");
+      toast.error(err, "Sign in failed. Please check your credentials and try again.");
     } finally {
       setLoading(false);
     }
@@ -63,19 +87,25 @@ export default function LoginPage() {
         </p>
       </div>
 
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          display: "flex", alignItems: "flex-start", gap: 9,
-          padding: "12px 14px", borderRadius: 10, marginBottom: 20,
-          background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.18)",
-        }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          <p style={{ fontSize: 13, color: "#991B1B", lineHeight: 1.5 }}>{error}</p>
-        </div>
-      )}
+      {/* Social Login */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+        <GoogleAuthButton
+          text="continue_with"
+          onSuccess={() => {
+            toast.success("Signed in with Google!");
+            router.replace(redirectUrl);
+          }}
+          onError={() => {
+            // Handled via toast inside GoogleAuthButton
+          }}
+        />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+        <span style={{ fontSize: 12, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500 }}>Or email</span>
+        <div style={{ flex: 1, height: 1, background: "#F0F0F0" }} />
+      </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
@@ -105,19 +135,44 @@ export default function LoginPage() {
               Forgot password?
             </Link>
           </div>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="••••••••"
-            required
-            disabled={loading}
-            autoComplete="current-password"
-            style={inputStyle}
-            onFocus={e => { e.currentTarget.style.borderColor = "#0A0A0A"; e.currentTarget.style.boxShadow = "0 0 0 1px #0A0A0A"; }}
-            onBlur={e => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}
-          />
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+              disabled={loading}
+              autoComplete="current-password"
+              style={{ ...inputStyle, paddingRight: "44px" }}
+              onFocus={e => { e.currentTarget.style.borderColor = "#0A0A0A"; e.currentTarget.style.boxShadow = "0 0 0 1px #0A0A0A"; }}
+              onBlur={e => { e.currentTarget.style.borderColor = "#E5E5E5"; e.currentTarget.style.boxShadow = "none"; }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              style={{
+                position: "absolute",
+                right: 12,
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "6px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#777",
+                borderRadius: "6px",
+                transition: "color 140ms",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#0A0A0A"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#777"; }}
+            >
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         </div>
 
         <button
@@ -141,7 +196,7 @@ export default function LoginPage() {
 
       <div style={{ marginTop: 32, textAlign: "center", fontSize: 14, color: "#666" }}>
         Don&apos;t have an account?{" "}
-        <Link href="/signup" style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>Sign up</Link>
+        <Link href={`/signup${redirectUrl !== "/dashboard" ? `?redirect=${encodeURIComponent(redirectUrl)}` : ""}`} style={{ color: "#0A0A0A", fontWeight: 500, textDecoration: "none" }}>Sign up</Link>
       </div>
 
       <style>{`
@@ -160,6 +215,26 @@ const inputStyle: React.CSSProperties = {
   transition: "border-color 140ms, box-shadow 140ms",
   fontFamily: "var(--font-outfit)",
 };
+
+function EyeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  );
+}
 
 function Spinner() {
   return (

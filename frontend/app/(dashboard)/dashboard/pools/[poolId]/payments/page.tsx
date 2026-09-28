@@ -5,6 +5,10 @@ import Link from "next/link";
 import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatAmount, formatDate, formatRelativeTime } from "../../../../../lib/format";
+import { toast } from "@/app/components/Toast";
+import { getUser } from "@/app/lib/auth";
+import ConfirmModal from "@/app/components/ui/ConfirmModal";
+import PoolNavTabs from "../../_components/PoolNavTabs";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -13,7 +17,7 @@ interface Pool {
   name: string;
   ownerId: string;
   currency: string;
-  totalAmount: number;
+  memberCount: number;
 }
 
 interface Payment {
@@ -55,10 +59,50 @@ export default function PaymentsPage({ params }: Props) {
 
   const [showForm, setShowForm] = useState(false);
   const [provider] = useState("paystack");
+  const [expectedAmount, setExpectedAmount] = useState("");
   const [createState, setCreateState] = useState<CreateState>("idle");
   const [createError, setCreateError] = useState("");
-
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    isDestructive?: boolean;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
+
+  const currentUser = getUser();
+  const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
+
+  function handleNullifyLinkPrompt(paymentId: string, token: string) {
+    setModalConfig({
+      isOpen: true,
+      title: "Nullify Payment Link",
+      message: `Are you sure you want to nullify/revoke payment link "${token.toUpperCase()}"? Clients using this link will no longer be able to make payments.`,
+      confirmText: "Nullify Link",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/payment-links/${paymentId}`).catch(() => api.delete(`/payments/${paymentId}`));
+          toast.success("Payment link nullified.");
+          setPayments(prev => prev.filter(p => p.id !== paymentId));
+        } catch (err) {
+          toast.error(err, "Failed to nullify payment link.");
+        } finally {
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
 
   const load = useCallback(async () => {
     setPageState("loading");
@@ -81,12 +125,18 @@ export default function PaymentsPage({ params }: Props) {
 
   async function handleCreate() {
     if (!pool) return;
+    const amount = Number(expectedAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setCreateError("Please enter a valid amount.");
+      setCreateState("error");
+      return;
+    }
     setCreateState("submitting");
     setCreateError("");
     try {
       const result = await api.post<CreateResult>("/payments/link", {
         projectId: poolId,
-        expectedAmount: Number(pool.totalAmount),
+        expectedAmount: amount,
         currency: pool.currency,
         provider,
       });
@@ -150,17 +200,74 @@ export default function PaymentsPage({ params }: Props) {
             Payment links
           </h1>
         </div>
-        {hasPayments && !showForm && !confirmedPayment && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Refresh button — always visible so owner can pull fresh payment status */}
           <button
-            onClick={() => setShowForm(true)}
-            style={btnStyle}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            onClick={() => load()}
+            title="Refresh payment status"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "9px 14px", borderRadius: 100,
+              background: "none", color: "#888",
+              border: "1px solid rgba(0,0,0,0.10)",
+              fontSize: 12.5, fontWeight: 500, cursor: "pointer",
+              fontFamily: "inherit", transition: "background 140ms",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
           >
-            <PlusIcon /> New link
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 4v6h-6" /><path d="M1 20v-6h6" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            Refresh
           </button>
-        )}
+          {hasPayments && !showForm && !confirmedPayment && isOwner && (
+            <button
+              onClick={() => setShowForm(true)}
+              style={btnStyle}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            >
+              <PlusIcon /> New link
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── Navigation Tabs ── */}
+      <PoolNavTabs
+        poolId={poolId}
+        isOwner={isOwner}
+        paymentCount={payments.length}
+      />
+
+      {/* Payment confirmed — link locked banner */}
+      {confirmedPayment && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 12,
+          padding: "14px 16px", borderRadius: 12, marginBottom: 20,
+          background: "rgba(22,163,74,0.05)", border: "1px solid rgba(22,163,74,0.18)",
+        }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+            background: "rgba(22,163,74,0.10)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 500, color: "#166534", marginBottom: 3 }}>Payment confirmed — link closed</p>
+            <p style={{ fontSize: 12.5, color: "#15803D", lineHeight: 1.55 }}>
+              This pool&apos;s payment link has been deactivated after a successful payment. Go to{" "}
+              <a href={`/dashboard/pools/${poolId}/split`} style={{ color: "#15803D", fontWeight: 500 }}>Configure split</a>{" "}
+              to distribute funds to your collaborators.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Success flash */}
       {createState === "success" && (
@@ -202,11 +309,24 @@ export default function PaymentsPage({ params }: Props) {
             marginBottom: 16, display: "flex", flexDirection: "column", gap: 6,
           }}>
             <Row label="Pool">{pool.name}</Row>
-            <Row label="Expected amount">
-              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>
-                {formatAmount(pool.totalAmount, pool.currency)}
-              </span>
-            </Row>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span style={{ fontSize: 12, color: "#bbb" }}>Expected amount</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 13, color: "#555", fontWeight: 500 }}>{pool.currency}</span>
+                <input
+                  type="number"
+                  value={expectedAmount}
+                  onChange={e => setExpectedAmount(e.target.value)}
+                  placeholder="0.00"
+                  style={{
+                    width: 120, padding: "6px 8px", borderRadius: 6,
+                    border: "1px solid rgba(0,0,0,0.12)", background: "#fff",
+                    fontSize: 13, fontFamily: "var(--font-mono)", textAlign: "right",
+                    outline: "none"
+                  }}
+                />
+              </div>
+            </div>
             <Row label="Currency">{pool.currency}</Row>
             <Row label="Payment provider">Paystack</Row>
           </div>
@@ -264,16 +384,20 @@ export default function PaymentsPage({ params }: Props) {
             No payment link yet
           </p>
           <p style={{ fontSize: 13.5, color: "#888", lineHeight: 1.65, marginBottom: 24, maxWidth: 380 }}>
-            Generate a unique payment link for this Pool and share it with your client. They pay without needing a Splitpay account.
+            {isOwner
+              ? "Generate a unique payment link for this Pool and share it with your client. They pay without needing a Splitpay account."
+              : "The pool owner has not generated a payment link yet. Once created, client payment status will appear here."}
           </p>
-          <button
-            onClick={() => setShowForm(true)}
-            style={btnStyle}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-          >
-            <PlusIcon /> Generate payment link
-          </button>
+          {isOwner && (
+            <button
+              onClick={() => setShowForm(true)}
+              style={btnStyle}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+            >
+              <PlusIcon /> Generate payment link
+            </button>
+          )}
         </div>
       )}
 
@@ -328,21 +452,59 @@ export default function PaymentsPage({ params }: Props) {
                     }}>
                       {publicUrl}
                     </span>
-                    <button
-                      onClick={() => copyLink(p.paymentLinkToken, p.id)}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        padding: "5px 11px", borderRadius: 6,
-                        background: isCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
-                        border: "none", cursor: "pointer",
-                        fontSize: 11.5, fontWeight: 500,
-                        color: isCopied ? "#166534" : "#555",
-                        transition: "all 120ms", whiteSpace: "nowrap",
-                        fontFamily: "var(--font-sans)",
-                      }}
-                    >
-                      {isCopied ? <><CheckIcon color="#166534" size={11} /> Copied</> : <><CopyIcon /> Copy link</>}
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => copyLink(p.paymentLinkToken, p.id)}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 5,
+                          padding: "5px 11px", borderRadius: 6,
+                          background: isCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
+                          border: "none", cursor: "pointer",
+                          fontSize: 11.5, fontWeight: 500,
+                          color: isCopied ? "#166534" : "#555",
+                          transition: "all 120ms", whiteSpace: "nowrap",
+                          fontFamily: "var(--font-sans)",
+                        }}
+                      >
+                        {isCopied ? <><CheckIcon color="#166534" size={11} /> Copied</> : <><CopyIcon /> Copy link</>}
+                      </button>
+                      {!isPaid && (
+                        <a
+                          href={publicUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "5px 11px", borderRadius: 6,
+                            background: "rgba(0,0,0,0.06)",
+                            fontSize: 11.5, fontWeight: 500, color: "#555",
+                            textDecoration: "none", whiteSpace: "nowrap",
+                            fontFamily: "var(--font-sans)",
+                          }}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                          </svg>
+                          Open
+                        </a>
+                      )}
+                      {isOwner && !isPaid && (
+                        <button
+                          onClick={() => handleNullifyLinkPrompt(p.id, p.paymentLinkToken)}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "5px 11px", borderRadius: 6,
+                            background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.18)",
+                            fontSize: 11.5, fontWeight: 500, color: "#DC2626",
+                            cursor: "pointer", whiteSpace: "nowrap",
+                            fontFamily: "var(--font-sans)",
+                          }}
+                        >
+                          Nullify
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Meta row */}
@@ -364,10 +526,10 @@ export default function PaymentsPage({ params }: Props) {
             })}
           </div>
 
-          {/* Notice: payment gateway not connected */}
-          <div style={{ marginTop: 20, padding: "13px 16px", borderRadius: 10, background: "rgba(202,138,4,0.04)", border: "1px solid rgba(202,138,4,0.14)" }}>
-            <p style={{ fontSize: 12, color: "#854D0E", lineHeight: 1.55 }}>
-              <strong>Payment gateway pending.</strong> The link is generated and shareable, but client payment processing requires Paystack integration. Token: <span style={{ fontFamily: "var(--font-mono)" }}>{payments[0]?.paymentLinkToken.slice(0, 12)}…</span>
+          {/* How payments work note */}
+          <div style={{ marginTop: 20, padding: "13px 16px", borderRadius: 10, background: "rgba(22,163,74,0.03)", border: "1px solid rgba(22,163,74,0.12)" }}>
+            <p style={{ fontSize: 12, color: "#166534", lineHeight: 1.55 }}>
+              <strong>Live payments enabled.</strong> Share the link with your client — they pay via Paystack and funds are automatically split between collaborators.
             </p>
           </div>
         </div>
@@ -387,6 +549,17 @@ export default function PaymentsPage({ params }: Props) {
           Back to Pool
         </Link>
       </div>
+
+      <ConfirmModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        confirmText={modalConfig.confirmText}
+        isDestructive={modalConfig.isDestructive}
+        loading={modalConfig.loading}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={() => setModalConfig(m => ({ ...m, isOpen: false }))}
+      />
     </div>
   );
 }

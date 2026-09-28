@@ -7,26 +7,26 @@ generator client {
   provider = "prisma-client-js"
 }
 
-enum KycStatus {
-  NONE
-  PENDING
-  VERIFIED
-  REJECTED
-}
-
-enum ProjectStatus {
-  DRAFT
+enum PoolStatus {
   ACTIVE
-  PAID
-  DISTRIBUTING
-  COMPLETED
-  CANCELLED
+  ARCHIVED
 }
 
-enum CollaboratorStatus {
-  INVITED
-  CONFIRMED
-  REMOVED
+enum PoolRole {
+  OWNER
+  MEMBER
+}
+
+enum InvitationType {
+  CODE
+  EMAIL
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
 }
 
 enum PaymentStatus {
@@ -34,10 +34,19 @@ enum PaymentStatus {
   SUCCESSFUL
   FAILED
   REFUNDED
-  PARTIALLY_REFUNDED
 }
 
-enum PayoutStatus {
+enum SplitType {
+  EQUAL
+  CUSTOM
+}
+
+enum AllocationStatus {
+  ALLOCATED
+  WITHDRAWN
+}
+
+enum WithdrawalStatus {
   PENDING
   PROCESSING
   SUCCESSFUL
@@ -46,153 +55,276 @@ enum PayoutStatus {
 }
 
 model User {
-  id              String    @id @default(uuid())
-  email           String    @unique
-  passwordHash    String?   @map("password_hash")
-  fullName        String    @map("full_name")
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String?  @map("password_hash")
+  fullName        String   @map("full_name")
   phone           String?
-  kycStatus       KycStatus @default(NONE) @map("kyc_status")
-  defaultCurrency String    @map("default_currency")
-  country         String
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  defaultCurrency String   @default("NGN") @map("default_currency")
+  country         String?  @default("NG")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  payoutAccounts   PayoutAccount[]
-  ownedProjects    Project[]       @relation("ProjectOwner")
-  collaboratorRows Collaborator[]
+  ownedPools      Pool[]         @relation("PoolOwner")
+  poolMemberships PoolMember[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]     @relation("Actor")
 
   @@map("users")
 }
 
-model PayoutAccount {
-  id                 String   @id @default(uuid())
-  userId             String   @map("user_id")
-  provider           String
-  providerAccountRef String   @map("provider_account_ref")
-  country            String
-  currency           String
-  isDefault          Boolean  @default(false) @map("is_default")
-  verified           Boolean  @default(false)
-  createdAt          DateTime @default(now()) @map("created_at")
-
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  collaborators Collaborator[]
-
-  @@index([userId])
-  @@map("payout_accounts")
-}
-
-model Project {
-  id          String        @id @default(uuid())
-  ownerId     String        @map("owner_id")
+model Pool {
+  id          String     @id @default(uuid())
+  ownerId     String     @map("owner_id")
   name        String
   description String?
-  totalAmount Decimal       @map("total_amount") @db.Decimal(18, 2)
-  currency    String
-  status      ProjectStatus @default(DRAFT)
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  currency    String     @default("NGN")
+  status      PoolStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
 
-  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id])
-  collaborators  Collaborator[]
-  payments       Payment[]
-  splitSnapshots SplitSnapshot[]
+  owner               User                 @relation("PoolOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members             PoolMember[]
+  invitations         PoolInvitation[]
+  paymentLinks        PaymentLink[]
+  transactions        Transaction[]
+  splitConfigurations SplitConfiguration[]
+  splitSnapshots      SplitSnapshot[]
+  withdrawals         Withdrawal[]
 
   @@index([ownerId])
-  @@map("projects")
+  @@map("pools")
 }
 
-model Collaborator {
-  id              String             @id @default(uuid())
-  projectId       String             @map("project_id")
-  userId          String?            @map("user_id")
-  invitedEmail    String?            @map("invited_email")
-  role            String
-  splitPercentage Decimal            @map("split_percentage") @db.Decimal(5, 2)
-  status          CollaboratorStatus @default(INVITED)
-  payoutAccountId String?            @map("payout_account_id")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
+model PoolMember {
+  id        String   @id @default(uuid())
+  poolId    String   @map("pool_id")
+  userId    String   @map("user_id")
+  role      PoolRole @default(MEMBER)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user               User?               @relation(fields: [userId], references: [id])
-  payoutAccount      PayoutAccount?      @relation(fields: [payoutAccountId], references: [id])
-  payoutTransactions PayoutTransaction[]
+  pool        Pool              @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  allocations SplitAllocation[]
+  withdrawals Withdrawal[]
 
-  @@index([projectId])
+  @@unique([poolId, userId])
+  @@index([poolId])
   @@index([userId])
-  @@map("collaborators")
+  @@map("pool_members")
 }
 
-// Frozen split state at the moment a payment is generated/confirmed.
-// Payout calculations must always read from here, never from live
-// Collaborator rows, so later edits never alter historical transactions.
-model SplitSnapshot {
-  id           String   @id @default(uuid())
-  projectId    String   @map("project_id")
-  paymentId    String   @unique @map("payment_id")
-  snapshotData Json     @map("snapshot_data")
-  createdAt    DateTime @default(now()) @map("created_at")
+model PoolInvitation {
+  id        String           @id @default(uuid())
+  poolId    String           @map("pool_id")
+  inviterId String           @map("inviter_id")
+  type      InvitationType   @default(CODE)
+  code      String?          @unique
+  email     String?
+  token     String           @unique
+  status    InvitationStatus @default(PENDING)
+  expiresAt DateTime         @map("expires_at")
+  createdAt DateTime         @default(now()) @map("created_at")
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  pool Pool @relation(fields: [poolId], references: [id], onDelete: Cascade)
 
-  @@index([projectId])
-  @@map("split_snapshots")
+  @@index([poolId])
+  @@index([token])
+  @@index([code])
+  @@map("pool_invitations")
 }
 
-model Payment {
+model PaymentLink {
+  id          String   @id @default(uuid())
+  poolId      String   @map("pool_id")
+  token       String   @unique
+  title       String
+  description String?
+  amount      Decimal  @db.Decimal(18, 2)
+  currency    String   @default("NGN")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  pool         Pool          @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([poolId])
+  @@index([token])
+  @@map("payment_links")
+}
+
+model Transaction {
   id                String        @id @default(uuid())
-  projectId         String        @map("project_id")
-  paymentLinkToken  String        @unique @map("payment_link_token")
-  expectedAmount    Decimal       @map("expected_amount") @db.Decimal(18, 2)
-  actualAmount      Decimal?      @map("actual_amount") @db.Decimal(18, 2)
-  currency          String
-  provider          String
+  poolId            String        @map("pool_id")
+  paymentLinkId     String?       @map("payment_link_id")
+  amount            Decimal       @db.Decimal(18, 2)
+  currency          String        @default("NGN")
+  provider          String        @default("paystack")
   providerReference String?       @unique @map("provider_reference")
   status            PaymentStatus @default(PENDING)
+  payerEmail        String?       @map("payer_email")
+  payerName         String?       @map("payer_name")
+  metadata          Json?
   paidAt            DateTime?     @map("paid_at")
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
-  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  splitSnapshot      SplitSnapshot?
-  payoutTransactions PayoutTransaction[]
+  pool          Pool               @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  paymentLink   PaymentLink?       @relation(fields: [paymentLinkId], references: [id], onDelete: SetNull)
+  events        TransactionEvent[]
+  splitSnapshot SplitSnapshot?
 
-  @@index([projectId])
-  @@map("payments")
+  @@index([poolId])
+  @@index([providerReference])
+  @@map("transactions")
 }
 
-model PayoutTransaction {
-  id                String       @id @default(uuid())
-  paymentId         String       @map("payment_id")
-  collaboratorId    String       @map("collaborator_id")
-  amount            Decimal      @db.Decimal(18, 2)
-  currency          String
-  status            PayoutStatus @default(PENDING)
-  providerReference String?      @unique @map("provider_reference")
-  failureReason     String?      @map("failure_reason")
-  attemptedAt       DateTime?    @map("attempted_at")
-  completedAt       DateTime?    @map("completed_at")
+model TransactionEvent {
+  id            String   @id @default(uuid())
+  transactionId String   @map("transaction_id")
+  eventType     String   @map("event_type")
+  data          Json?
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  payment      Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  collaborator Collaborator @relation(fields: [collaboratorId], references: [id])
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
-  @@index([paymentId])
-  @@index([collaboratorId])
-  @@map("payout_transactions")
+  @@index([transactionId])
+  @@map("transaction_events")
 }
 
-model WebhookEvent {
-  id              String   @id @default(uuid())
-  provider        String
-  eventType       String   @map("event_type")
-  providerEventId String   @unique @map("provider_event_id")
-  rawPayload      Json     @map("raw_payload")
-  processed       Boolean  @default(false)
-  receivedAt      DateTime @default(now()) @map("received_at")
+model SplitConfiguration {
+  id            String    @id @default(uuid())
+  poolId        String    @map("pool_id")
+  type          SplitType @default(EQUAL)
+  configuration Json
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  @@map("webhook_events")
+  pool Pool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@index([poolId])
+  @@map("split_configurations")
+}
+
+model SplitSnapshot {
+  id                  String    @id @default(uuid())
+  poolId              String    @map("pool_id")
+  transactionId       String    @unique @map("transaction_id")
+  type                SplitType
+  snapshotData        Json      @map("snapshot_data")
+  totalAmount         Decimal   @map("total_amount") @db.Decimal(18, 2)
+  distributableAmount Decimal   @map("distributable_amount") @db.Decimal(18, 2)
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  pool        Pool              @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  transaction Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  allocations SplitAllocation[]
+
+  @@index([poolId])
+  @@map("split_snapshots")
+}
+
+model SplitAllocation {
+  id           String           @id @default(uuid())
+  snapshotId   String           @map("snapshot_id")
+  poolMemberId String           @map("pool_member_id")
+  percentage   Decimal          @db.Decimal(5, 2)
+  amount       Decimal          @db.Decimal(18, 2)
+  currency     String           @default("NGN")
+  status       AllocationStatus @default(ALLOCATED)
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  snapshot   SplitSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  poolMember PoolMember    @relation(fields: [poolMemberId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@index([poolMemberId])
+  @@map("split_allocations")
+}
+
+model Withdrawal {
+  id                String           @id @default(uuid())
+  poolId            String           @map("pool_id")
+  poolMemberId      String           @map("pool_member_id")
+  amount            Decimal          @db.Decimal(18, 2)
+  currency          String           @default("NGN")
+  status            WithdrawalStatus @default(PENDING)
+  providerReference String?          @unique @map("provider_reference")
+  bankCode          String?          @map("bank_code")
+  accountNumber     String?          @map("account_number")
+  accountName       String?          @map("account_name")
+  failureReason     String?          @map("failure_reason")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  pool       Pool              @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  poolMember PoolMember        @relation(fields: [poolMemberId], references: [id], onDelete: Cascade)
+  events     WithdrawalEvent[]
+
+  @@index([poolId])
+  @@index([poolMemberId])
+  @@map("withdrawals")
+}
+
+model WithdrawalEvent {
+  id           String   @id @default(uuid())
+  withdrawalId String   @map("withdrawal_id")
+  eventType    String   @map("event_type")
+  data         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalId])
+  @@map("withdrawal_events")
+}
+
+model LedgerAccount {
+  id           String   @id @default(uuid())
+  accountType  String   @map("account_type")
+  poolId       String?  @map("pool_id")
+  poolMemberId String?  @map("pool_member_id")
+  balance      Decimal  @default(0) @db.Decimal(18, 2)
+  currency     String   @default("NGN")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  entries LedgerEntry[]
+
+  @@map("ledger_accounts")
+}
+
+model LedgerEntry {
+  id          String   @id @default(uuid())
+  accountId   String   @map("account_id")
+  amount      Decimal  @db.Decimal(18, 2)
+  type        String
+  description String?
+  referenceId String?  @map("reference_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("ledger_entries")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  title     String
+  message   String
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false) @map("is_read")
+  data      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("notifications")
 }
 
 model AuditLog {
@@ -204,6 +336,21 @@ model AuditLog {
   metadata   Json?
   createdAt  DateTime @default(now()) @map("created_at")
 
+  actor User? @relation("Actor", fields: [actorId], references: [id], onDelete: SetNull)
+
   @@index([entityType, entityId])
   @@map("audit_log")
 }
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([token])
+  @@map("password_reset_tokens")
+}
+

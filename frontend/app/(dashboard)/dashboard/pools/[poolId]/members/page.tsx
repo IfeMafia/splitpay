@@ -5,6 +5,10 @@ import Link from "next/link";
 import { api, ApiError } from "../../../../../lib/api";
 import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatDate, formatRelativeTime, formatPercent, shortId } from "../../../../../lib/format";
+import { toast } from "@/app/components/Toast";
+import { getUser } from "@/app/lib/auth";
+import ConfirmModal from "@/app/components/ui/ConfirmModal";
+import PoolNavTabs from "../../_components/PoolNavTabs";
 
 /* ─── Types ───────────────────────────────────── */
 
@@ -33,11 +37,17 @@ interface Props {
 
 type PageState = "loading" | "ready" | "error";
 type InviteState = "idle" | "submitting" | "success" | "error";
+type CodeInviteState = "idle" | "generating" | "success" | "error";
 
 interface FormErrors {
   email?: string;
   role?: string;
   splitPercentage?: string;
+}
+
+interface InviteCode {
+  code: string;
+  expiresAt?: string;
 }
 
 /* ─── Page ────────────────────────────────────── */
@@ -61,8 +71,34 @@ export default function MembersPage({ params }: Props) {
   const [inviteState, setInviteState] = useState<InviteState>("idle");
   const [inviteError, setInviteError] = useState("");
 
+  // Invite code state
+  const [inviteCode, setInviteCode] = useState<InviteCode | null>(null);
+  const [codeInviteState, setCodeInviteState] = useState<CodeInviteState>("idle");
+  const [codeInviteError, setCodeInviteError] = useState("");
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [showCodeSection, setShowCodeSection] = useState(false);
+
   // Remove state
   const [removingId, setRemovingId] = useState<string | null>(null);
+
+  // Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    isDestructive?: boolean;
+    loading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
+
+  const currentUser = getUser();
+  const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
 
   useEffect(() => {
     load();
@@ -76,7 +112,15 @@ export default function MembersPage({ params }: Props) {
         api.get<Collaborator[]>(`/collaborators/project/${poolId}`).catch(() => [] as Collaborator[]),
       ]);
       setPool(poolData);
-      setCollaborators(Array.isArray(collabData) ? collabData : []);
+      const list = Array.isArray(collabData) ? collabData : [];
+      setCollaborators(list);
+
+      // Check if there is an active invite code in the collaborators list
+      const codeItem = list.find((c: any) => c.status === "INVITED" && !c.invitedEmail);
+      if (codeItem) {
+        setInviteCode({ code: (codeItem as any).code || codeItem.id });
+      }
+
       setPageState("ready");
     } catch (err) {
       if (err instanceof ApiError) setErrorStatus(err.status);
@@ -124,29 +168,120 @@ export default function MembersPage({ params }: Props) {
       });
       setCollaborators(prev => [...prev, newCollab]);
       setInviteState("success");
-      // Reset form after short delay
       setTimeout(() => {
         setEmail(""); setRole("Collaborator"); setSplitPct("");
         setTouched({}); setFormErrors({});
         setInviteState("idle"); setShowForm(false);
-      }, 1400);
+        load();
+      }, 1200);
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : "Failed to send invitation.");
       setInviteState("error");
     }
   }
 
-  async function handleRemove(id: string) {
-    if (!confirm("Remove this collaborator from the Pool?")) return;
-    setRemovingId(id);
+  function handleRemovePrompt(id: string, nameOrEmail: string) {
+    setModalConfig({
+      isOpen: true,
+      title: "Remove Collaborator",
+      message: `Are you sure you want to remove ${nameOrEmail} from this Pool?`,
+      confirmText: "Remove",
+      isDestructive: true,
+      onConfirm: async () => {
+        setRemovingId(id);
+        try {
+          await api.delete<void>(`/collaborators/${id}`);
+          setCollaborators(prev => prev.filter(c => c.id !== id));
+          toast.success("Collaborator removed.");
+        } catch (err) {
+          toast.error(err, "Failed to remove collaborator.");
+        } finally {
+          setRemovingId(null);
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
+
+  function handleLeavePoolPrompt() {
+    setModalConfig({
+      isOpen: true,
+      title: "Leave Pool",
+      message: `Are you sure you want to leave "${pool?.name}"? You will lose access to its splits and allocations.`,
+      confirmText: "Leave Pool",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.post(`/collaborators/leave/${poolId}`, {});
+          toast.success("You left the pool.");
+          window.location.href = "/dashboard/pools";
+        } catch (err) {
+          toast.error(err, "Failed to leave pool.");
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
+
+  function handleNullifyCodePrompt() {
+    if (!inviteCode) return;
+    setModalConfig({
+      isOpen: true,
+      title: "Nullify Invite Code",
+      message: `Are you sure you want to nullify/revoke code "${inviteCode.code.toUpperCase()}"? Anyone attempting to join using this code or link will be blocked.`,
+      confirmText: "Nullify Code",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/collaborators/${inviteCode.code}`);
+          toast.success("Invite code nullified.");
+          setInviteCode(null);
+          setShowCodeSection(false);
+          load();
+        } catch (err) {
+          toast.error(err, "Failed to nullify invite code.");
+        } finally {
+          setModalConfig(m => ({ ...m, isOpen: false }));
+        }
+      },
+    });
+  }
+
+  async function handleGenerateCode() {
+    setCodeInviteState("generating");
+    setCodeInviteError("");
     try {
-      await api.delete<void>(`/collaborators/${id}`);
-      setCollaborators(prev => prev.filter(c => c.id !== id));
+      const result = await api.post<Collaborator & { code?: string }>("/collaborators", {
+        projectId: poolId,
+        role: "Collaborator",
+        splitPercentage: 0,
+      });
+      setInviteCode({ code: result.code || result.id });
+      setCodeInviteState("success");
+      setShowCodeSection(true);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to remove collaborator.");
-    } finally {
-      setRemovingId(null);
+      setCodeInviteError(err instanceof Error ? err.message : "Failed to generate invite code.");
+      setCodeInviteState("error");
     }
+  }
+
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  async function handleCopyOnlyCode() {
+    if (!inviteCode) return;
+    await navigator.clipboard.writeText(inviteCode.code);
+    setCodeCopied(true);
+    toast.success("Invite code copied to clipboard!");
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
+  async function handleCopyLink() {
+    if (!inviteCode) return;
+    const inviteLink = `${window.location.origin}/join/${inviteCode.code}`;
+    await navigator.clipboard.writeText(inviteLink);
+    setLinkCopied(true);
+    toast.success("Invite link copied to clipboard!");
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   const totalSplit = collaborators.reduce((s, c) => s + Number(c.splitPercentage), 0);
@@ -181,26 +316,238 @@ export default function MembersPage({ params }: Props) {
           </h1>
         </div>
         {!showForm && (
-          <button
-            onClick={() => setShowForm(true)}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 7,
-              padding: "9px 18px", borderRadius: 100,
-              background: "#0A0A0A", color: "#fff", border: "none",
-              fontSize: 13, fontWeight: 500, cursor: "pointer",
-              transition: "background 140ms", flexShrink: 0,
-              fontFamily: "var(--font-sans)",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Invite collaborator
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {isOwner ? (
+              <>
+                <button
+                  onClick={() => setShowForm(true)}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "9px 18px", borderRadius: 100,
+                    background: "#0A0A0A", color: "#fff", border: "none",
+                    fontSize: 13, fontWeight: 500, cursor: "pointer",
+                    transition: "background 140ms", flexShrink: 0,
+                    fontFamily: "var(--font-sans)",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  Invite by email
+                </button>
+                <button
+                  onClick={() => {
+                    if (!inviteCode) {
+                      handleGenerateCode();
+                    } else {
+                      setShowCodeSection(s => !s);
+                    }
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "9px 18px", borderRadius: 100,
+                    background: "none", color: "#555", border: "1px solid rgba(0,0,0,0.12)",
+                    fontSize: 13, fontWeight: 500, cursor: "pointer",
+                    transition: "background 140ms, border-color 140ms", flexShrink: 0,
+                    fontFamily: "var(--font-sans)",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.04)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "none"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  Invite code
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleLeavePoolPrompt}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 7,
+                  padding: "9px 18px", borderRadius: 100,
+                  background: "rgba(220,38,38,0.08)", color: "#DC2626",
+                  border: "1px solid rgba(220,38,38,0.2)",
+                  fontSize: 13, fontWeight: 500, cursor: "pointer",
+                  transition: "background 140ms", flexShrink: 0,
+                  fontFamily: "var(--font-sans)",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.15)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.08)"; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Leave Pool
+              </button>
+            )}
+          </div>
         )}
       </div>
+
+      {/* ── Navigation Tabs ── */}
+      <PoolNavTabs
+        poolId={poolId}
+        isOwner={isOwner}
+        memberCount={collaborators.length}
+      />
+
+      {/* ── Invite code section ── */}
+      {showCodeSection && !showForm && (
+        <div style={{
+          marginBottom: 24, padding: "20px 22px", borderRadius: 14,
+          border: "1px solid rgba(0,0,0,0.10)", background: "#fff",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14, gap: 12 }}>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 500, color: "#0A0A0A", marginBottom: 3 }}>Invite by code</p>
+              <p style={{ fontSize: 12.5, color: "#999" }}>
+                Generate a shareable link. Anyone with the link can join this Pool.
+              </p>
+            </div>
+            <button
+              onClick={() => { setShowCodeSection(false); setInviteCode(null); setCodeInviteState("idle"); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#bbb", padding: 4, flexShrink: 0 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {codeInviteState === "error" && codeInviteError && (
+            <div style={{
+              display: "flex", alignItems: "flex-start", gap: 9,
+              padding: "10px 14px", borderRadius: 8, marginBottom: 14,
+              background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
+            }}>
+              <p style={{ fontSize: 12.5, color: "#991B1B" }}>{codeInviteError}</p>
+            </div>
+          )}
+
+          {inviteCode ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Prominent Invite Code */}
+              <div>
+                <p style={{ fontSize: 11.5, fontWeight: 500, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  Invite Code
+                </p>
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                  padding: "12px 16px", borderRadius: 10,
+                  border: "1px solid rgba(0,0,0,0.15)", background: "#F4F4F5",
+                }}>
+                  <span style={{
+                    fontSize: 20, fontWeight: 700, fontFamily: "var(--font-mono)", color: "#0A0A0A",
+                    letterSpacing: "0.12em", textTransform: "uppercase",
+                  }}>
+                    {inviteCode.code}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={handleCopyOnlyCode}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "8px 14px", borderRadius: 8, flexShrink: 0,
+                        background: codeCopied ? "rgba(22,163,74,0.1)" : "#0A0A0A",
+                        color: codeCopied ? "#16A34A" : "#fff",
+                        border: "none", fontSize: 12, fontWeight: 500, cursor: "pointer",
+                        transition: "all 180ms", fontFamily: "inherit",
+                      }}
+                    >
+                      {codeCopied ? (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg> Code Copied</>
+                      ) : (
+                        <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Code</>
+                      )}
+                    </button>
+                    {isOwner && (
+                      <button
+                        onClick={handleNullifyCodePrompt}
+                        style={{
+                          padding: "8px 12px", borderRadius: 8,
+                          border: "1px solid rgba(220,38,38,0.2)", background: "rgba(220,38,38,0.06)",
+                          color: "#DC2626", fontSize: 12, fontWeight: 500, cursor: "pointer",
+                          fontFamily: "inherit", transition: "background 140ms",
+                        }}
+                      >
+                        Nullify Code
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Link Reference */}
+              <div>
+                <p style={{ fontSize: 11.5, fontWeight: 500, color: "#888", marginBottom: 6 }}>Join Link</p>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "8px 12px", borderRadius: 8,
+                  border: "1px solid rgba(0,0,0,0.08)", background: "#FAFAFA",
+                }}>
+                  <span style={{
+                    flex: 1, fontSize: 12, fontFamily: "var(--font-mono)", color: "#666",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {typeof window !== "undefined" ? `${window.location.origin}/join/${inviteCode.code}` : `/join/${inviteCode.code}`}
+                  </span>
+                  <button
+                    onClick={handleCopyLink}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "5px 10px", borderRadius: 6, flexShrink: 0,
+                      background: linkCopied ? "rgba(22,163,74,0.1)" : "rgba(0,0,0,0.06)",
+                      color: linkCopied ? "#16A34A" : "#555",
+                      border: "none", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {linkCopied ? "Link Copied" : "Copy Link"}
+                  </button>
+                </div>
+              </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+              <p style={{ fontSize: 11.5, color: "#999", margin: 0 }}>Code & link expire in 7 days.</p>
+                <button
+                  onClick={handleGenerateCode}
+                  disabled={codeInviteState === "generating"}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "6px 12px", borderRadius: 7,
+                    background: "none", border: "1px solid rgba(0,0,0,0.12)",
+                    color: "#666", fontSize: 12, cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Generate new code
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={handleGenerateCode}
+              disabled={codeInviteState === "generating"}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "10px 20px", borderRadius: 100,
+                background: codeInviteState === "generating" ? "#555" : "#0A0A0A",
+                color: "#fff", border: "none",
+                fontSize: 13, fontWeight: 500,
+                cursor: codeInviteState === "generating" ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {codeInviteState === "generating" ? <><Spinner /> Generating…</> : "Generate invite code"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Invite form ── */}
       {showForm && (
@@ -472,25 +819,27 @@ export default function MembersPage({ params }: Props) {
                       {formatPercent(c.splitPercentage)}
                     </span>
                     <StatusBadge status={c.status} />
-                    <button
-                      onClick={() => handleRemove(c.id)}
-                      disabled={isRemoving}
-                      title="Remove collaborator"
-                      style={{
-                        background: "none", border: "none", padding: 4,
-                        cursor: isRemoving ? "not-allowed" : "pointer",
-                        color: "#ccc", transition: "color 120ms",
-                      }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#DC2626"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#ccc"; }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14H6L5 6" />
-                        <path d="M10 11v6M14 11v6" />
-                        <path d="M9 6V4h6v2" />
-                      </svg>
-                    </button>
+                    {isOwner && (
+                      <button
+                        onClick={() => handleRemovePrompt(c.id, identifier)}
+                        disabled={isRemoving}
+                        title="Remove collaborator"
+                        style={{
+                          background: "none", border: "none", padding: 4,
+                          cursor: isRemoving ? "not-allowed" : "pointer",
+                          color: "#ccc", transition: "color 120ms",
+                        }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#DC2626"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#ccc"; }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14H6L5 6" />
+                          <path d="M10 11v6M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -533,6 +882,17 @@ export default function MembersPage({ params }: Props) {
           Back to Pool
         </Link>
       </div>
+
+      <ConfirmModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        confirmText={modalConfig.confirmText}
+        isDestructive={modalConfig.isDestructive}
+        loading={modalConfig.loading}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={() => setModalConfig(m => ({ ...m, isOpen: false }))}
+      />
 
     </div>
   );
