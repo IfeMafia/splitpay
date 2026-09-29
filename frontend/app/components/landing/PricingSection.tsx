@@ -3,30 +3,30 @@
 export default function PricingSection() {
   const breakdown = [
     {
-      label: "Client pays",
-      amount: "₦100,000",
-      sub: "One payment. One link.",
+      label: "Client invoice amount",
+      amount: "₦101,010",
+      sub: "Target pool payout (₦100,000) + 1.01% fee (₦1,010). One simple payment link.",
       highlight: false,
       negative: false,
     },
     {
-      label: "Payment processing fee",
-      amount: "−₦1,600",
-      sub: "Charged by Paystack (1.5% + ₦100). This is the card processing fee — standard across all Nigerian payment platforms.",
+      label: "Splitpay base platform fee",
+      amount: "−₦1,010",
+      sub: "Our transparent 1.01% base fee for automated splits, notifications, and immutable ledger accounting.",
       highlight: false,
       negative: true,
     },
     {
-      label: "Splitpay platform fee",
-      amount: "−₦5,000",
-      sub: "Our 5% fee. This is how we keep the lights on.",
+      label: "Payment processing gateway",
+      amount: "−₦1,615",
+      sub: "Standard Paystack card processing fee (1.5% + ₦100) applied by the payment gateway.",
       highlight: false,
       negative: true,
     },
     {
       label: "Your team receives",
-      amount: "₦93,400",
-      sub: "Distributed instantly across all collaborators based on the agreed split.",
+      amount: "₦98,385",
+      sub: "Distributed automatically and instantaneously across all collaborators based on your agreed split.",
       highlight: true,
       negative: false,
     },
@@ -63,7 +63,7 @@ export default function PricingSection() {
               </span>
             </h2>
             <p style={{ fontSize: 15, color: "#888", lineHeight: 1.75, maxWidth: 380, margin: 0 }}>
-              Splitpay charges a small fee only when a client payment comes through. If no payment happens, you pay nothing.
+              Splitpay charges an ultra-low 1.01% base fee only when a client payment is confirmed. Pass the fee to your client or absorb it — you are in full control.
             </p>
           </div>
         </div>
@@ -94,7 +94,7 @@ export default function PricingSection() {
                   Example breakdown
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 500, color: "#0A0A0A" }}>
-                  What happens to a ₦100,000 payment
+                  What happens to a ₦100,000 project payment
                 </div>
               </div>
               <div style={{
@@ -103,7 +103,7 @@ export default function PricingSection() {
                 display: "flex", alignItems: "center", gap: 6,
               }}>
                 <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22C55E" }} />
-                <span style={{ fontSize: 10, fontWeight: 600, color: "#16A34A" }}>Verified</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: "#16A34A" }}>1.01% Base Fee</span>
               </div>
             </div>
 
@@ -159,13 +159,13 @@ export default function PricingSection() {
               background: "#C8FF57", borderRadius: 20, padding: "32px",
             }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4A6A00", marginBottom: 16 }}>
-                Platform fee
+                Base platform fee
               </div>
               <div style={{ fontSize: "clamp(48px,5vw,64px)", fontWeight: 700, letterSpacing: "-0.06em", color: "#0A0A0A", lineHeight: 1 }}>
-                5%
+                1.01%
               </div>
               <div style={{ fontSize: 13, color: "#4A6A00", marginTop: 10, lineHeight: 1.6 }}>
-                Only charged when a payment is received. Zero fee if no payment comes in.
+                Only charged when a payment is received. Option to add the fee directly to client checkout. Zero monthly subscription costs.
               </div>
             </div>
 

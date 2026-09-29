@@ -33,17 +33,36 @@ async function persistMemberSplit(poolId: string, memberOrTokenId: string, perce
     );
   }
 
+  // Guard: compute how much the owner currently has available to give away
+  // (= 100% minus every non-owner share that already exists, excluding the entry being updated)
+  if (ownerMember && ownerMember.id !== memberOrTokenId) {
+    const existingNonOwnerSum = currentShares
+      .filter((s) => s.memberId !== ownerMember.id && s.memberId !== ownerMember.userId)
+      .reduce((sum, s) => sum + Number(s.percentage), 0);
+
+    const ownerAvailable = Math.round((100 - existingNonOwnerSum) * 100) / 100;
+
+    if (percentage > ownerAvailable) {
+      throw new AppError(
+        400,
+        `Cannot allocate ${percentage}% — the owner only has ${ownerAvailable.toFixed(2)}% left to distribute. Reduce this collaborator's share or remove another one first.`,
+        'SPLIT_EXCEEDS_OWNER_AVAILABLE',
+      );
+    }
+  }
+
   // Add or update the target member/invitation share
   currentShares.push({ memberId: memberOrTokenId, percentage });
 
-  // If owner member exists and is not explicitly in currentShares, or if we need to balance the owner
+  // Deduct the allocated percentage from the owner — owner always gets the exact remainder
   if (ownerMember && ownerMember.id !== memberOrTokenId) {
     const ownerIndex = currentShares.findIndex((s) => s.memberId === ownerMember.id || s.memberId === ownerMember.userId);
     const nonOwnerSum = currentShares
       .filter((s) => s.memberId !== ownerMember.id && s.memberId !== ownerMember.userId)
       .reduce((sum, s) => sum + Number(s.percentage), 0);
 
-    const remainingForOwner = Math.max(0, Math.round((100 - nonOwnerSum) * 100) / 100);
+    // This is always >= 0 because of the guard above
+    const remainingForOwner = Math.round((100 - nonOwnerSum) * 100) / 100;
 
     if (ownerIndex >= 0) {
       currentShares[ownerIndex].percentage = remainingForOwner;
@@ -433,7 +452,68 @@ export async function getProjectInviteCode(poolId: string, actorId: string) {
     orderBy: { createdAt: 'desc' },
   });
 
-  return codeInvite ? { code: codeInvite.code || codeInvite.token, expiresAt: codeInvite.expiresAt } : null;
+  if (!codeInvite) return null;
+
+  const splitConfig = await prisma.splitConfiguration.findFirst({
+    where: { poolId },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  let splitPercentage = 0;
+  if (splitConfig && Array.isArray(splitConfig.configuration)) {
+    const entry = (splitConfig.configuration as any[]).find(
+      (s: any) => s && (s.memberId === codeInvite.token || s.memberId === codeInvite.code || s.memberId === codeInvite.id),
+    );
+    if (entry && entry.percentage !== undefined) {
+      splitPercentage = Number(entry.percentage);
+    }
+  }
+
+  return {
+    code: codeInvite.code || codeInvite.token,
+    expiresAt: codeInvite.expiresAt,
+    splitPercentage,
+  };
+}
+
+async function cleanupSplitConfigOnRemoval(poolId: string, removedIdentifiers: string[]) {
+  const [splitConfig, pool] = await Promise.all([
+    prisma.splitConfiguration.findFirst({ where: { poolId }, orderBy: { updatedAt: 'desc' } }),
+    prisma.pool.findUnique({
+      where: { id: poolId },
+      include: { members: { where: { role: PoolRole.OWNER } } },
+    }),
+  ]);
+
+  if (!splitConfig || !Array.isArray(splitConfig.configuration)) return;
+
+  const removeSet = new Set(removedIdentifiers.filter(Boolean));
+  const ownerMember = pool?.members[0];
+  const currentShares = (splitConfig.configuration as any[]).filter(
+    (s: any) => s && s.memberId && !removeSet.has(String(s.memberId)),
+  );
+
+  if (ownerMember) {
+    const ownerIndex = currentShares.findIndex((s) => s.memberId === ownerMember.id || s.memberId === ownerMember.userId);
+    const nonOwnerSum = currentShares
+      .filter((s) => s.memberId !== ownerMember.id && s.memberId !== ownerMember.userId)
+      .reduce((sum, s) => sum + Number(s.percentage), 0);
+
+    const remainingForOwner = Math.max(0, Math.round((100 - nonOwnerSum) * 100) / 100);
+
+    if (ownerIndex >= 0) {
+      currentShares[ownerIndex].percentage = remainingForOwner;
+    } else {
+      currentShares.unshift({ memberId: ownerMember.id, percentage: remainingForOwner });
+    }
+  }
+
+  await prisma.splitConfiguration.update({
+    where: { id: splitConfig.id },
+    data: {
+      configuration: currentShares,
+    },
+  });
 }
 
 /**
@@ -460,11 +540,19 @@ export async function removeCollaborator(id: string, actorId: string) {
       where: { id: invitation.id },
       data: { status: InvitationStatus.REVOKED },
     });
+
+    await cleanupSplitConfigOnRemoval(invitation.poolId, [
+      invitation.id,
+      invitation.token,
+      invitation.code || '',
+      invitation.email || '',
+    ]);
+
     return;
   }
 
   // Otherwise treat id as a PoolMember id
-  const member = await prisma.poolMember.findUnique({ where: { id } });
+  const member = await prisma.poolMember.findUnique({ where: { id }, include: { user: true } });
   if (!member) throw new AppError(404, 'Collaborator not found', 'NOT_FOUND');
 
   const pool = await prisma.pool.findUnique({ where: { id: member.poolId } });
@@ -477,7 +565,13 @@ export async function removeCollaborator(id: string, actorId: string) {
     if (ownerCount <= 1) throw new AppError(400, 'Cannot remove the last owner of the pool', 'LAST_OWNER_REMOVAL_FORBIDDEN');
   }
 
-  await prisma.poolMember.delete({ where: { id } });
+  await prisma.poolMember.delete({ where: { id: member.id } });
+
+  await cleanupSplitConfigOnRemoval(member.poolId, [
+    member.id,
+    member.userId,
+    member.user?.email || '',
+  ]);
 
   await prisma.auditLog.create({
     data: {
@@ -502,6 +596,7 @@ export async function leavePool(poolId: string, actorId: string) {
 
   const member = await prisma.poolMember.findUnique({
     where: { poolId_userId: { poolId, userId: actorId } },
+    include: { user: true },
   });
 
   if (!member) {
@@ -509,6 +604,12 @@ export async function leavePool(poolId: string, actorId: string) {
   }
 
   await prisma.poolMember.delete({ where: { id: member.id } });
+
+  await cleanupSplitConfigOnRemoval(poolId, [
+    member.id,
+    member.userId,
+    member.user?.email || '',
+  ]);
 
   await prisma.auditLog.create({
     data: {

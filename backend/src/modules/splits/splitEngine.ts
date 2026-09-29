@@ -43,11 +43,13 @@ export function calculateAllocations({
   splitType,
   members,
   feeAmountMajor,
+  platformFeePercent,
 }: {
   totalAmountMajor: number;
   splitType: SplitType;
   members: MemberPercentage[];
   feeAmountMajor?: number;
+  platformFeePercent?: number;
 }): SplitCalculationResult {
   if (members.length === 0) {
     throw new Error('At least one member is required to calculate splits');
@@ -76,10 +78,15 @@ export function calculateAllocations({
     splitPercentage: splitType === SplitType.CUSTOM ? (m.percentage || 0) : equalPercentage,
   }));
 
+  const effectivePlatformFeePercent =
+    platformFeePercent !== undefined
+      ? platformFeePercent
+      : (feeAmountMajor === 0 ? 0 : Number(process.env.PLATFORM_FEE_PERCENT || 1.01));
+
   const chain = executeFinancialChain({
     grossAmountMinor: grossMinor,
     authoritativeProviderFeeMinor: feeMinor,
-    platformFeePercent: 5,
+    platformFeePercent: effectivePlatformFeePercent,
     collaborators,
   });
 

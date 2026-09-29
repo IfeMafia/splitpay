@@ -77,6 +77,7 @@ describe('Split Engine — Arithmetic & Allocations', () => {
     const result = calculateAllocations({
       totalAmountMajor: 500,
       feeAmountMajor: 50,
+      platformFeePercent: 0,
       splitType: SplitType.CUSTOM,
       members,
     });

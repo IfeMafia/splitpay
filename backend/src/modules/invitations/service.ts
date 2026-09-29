@@ -11,6 +11,44 @@ function extractToken(rawToken: string): string {
   return cleaned;
 }
 
+async function resolveInvitationSplitPercentage(poolId: string, invitation: any): Promise<number> {
+  const [splitConfig, poolMembers, pendingInvitations] = await Promise.all([
+    prisma.splitConfiguration.findFirst({
+      where: { poolId },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    prisma.poolMember.findMany({ where: { poolId } }),
+    prisma.poolInvitation.findMany({
+      where: { poolId, status: InvitationStatus.PENDING },
+    }),
+  ]);
+
+  if (splitConfig && Array.isArray(splitConfig.configuration)) {
+    const entry = (splitConfig.configuration as any[]).find((s: any) => {
+      if (!s || !s.memberId) return false;
+      const mId = String(s.memberId);
+      return (
+        mId === invitation.token ||
+        mId === invitation.code ||
+        mId === invitation.id ||
+        (invitation.email && mId.toLowerCase() === invitation.email.toLowerCase())
+      );
+    });
+
+    if (entry && entry.percentage !== undefined && Number(entry.percentage) > 0) {
+      return Number(entry.percentage);
+    }
+
+    if (splitConfig.type === 'EQUAL') {
+      const totalParticipants = Math.max(1, poolMembers.length + pendingInvitations.length);
+      return Math.round((100 / totalParticipants) * 100) / 100;
+    }
+  }
+
+  const totalCount = Math.max(1, poolMembers.length + 1);
+  return Math.round((100 / totalCount) * 100) / 100;
+}
+
 /**
  * Public endpoint — fetch invitation details by token or code.
  */
@@ -35,8 +73,25 @@ export async function getInvitation(rawToken: string) {
     },
   });
 
-  if (!invitation || invitation.status !== InvitationStatus.PENDING) {
-    throw new AppError(404, 'Invitation not found or already accepted', 'NOT_FOUND');
+  if (!invitation) {
+    throw new AppError(404, 'Invitation not found. Please check your link or code.', 'NOT_FOUND');
+  }
+
+  const splitPercentage = await resolveInvitationSplitPercentage(invitation.poolId, invitation);
+
+  if (invitation.status === InvitationStatus.ACCEPTED) {
+    return {
+      id: invitation.token || invitation.code,
+      projectId: invitation.poolId,
+      projectName: invitation.pool.name,
+      invitedEmail: invitation.email,
+      role: 'Collaborator',
+      splitPercentage,
+      inviterName: invitation.pool.owner.fullName,
+      inviterEmail: invitation.pool.owner.email,
+      createdAt: invitation.createdAt,
+      isAlreadyAccepted: true,
+    };
   }
 
   if (invitation.expiresAt < new Date()) {
@@ -49,10 +104,11 @@ export async function getInvitation(rawToken: string) {
     projectName: invitation.pool.name,
     invitedEmail: invitation.email,
     role: 'Collaborator',
-    splitPercentage: 0,
+    splitPercentage,
     inviterName: invitation.pool.owner.fullName,
     inviterEmail: invitation.pool.owner.email,
     createdAt: invitation.createdAt,
+    isAlreadyAccepted: false,
   };
 }
 
@@ -74,8 +130,29 @@ export async function acceptInvitation(rawToken: string, userId: string) {
     },
   });
 
-  if (!invitation || invitation.status !== InvitationStatus.PENDING) {
-    throw new AppError(404, 'Invitation not found or already accepted', 'NOT_FOUND');
+  if (!invitation) {
+    throw new AppError(404, 'Invitation not found. Please check your link or code.', 'NOT_FOUND');
+  }
+
+  // Check if user is already a member of this pool (idempotency)
+  const existingMember = await prisma.poolMember.findUnique({
+    where: { poolId_userId: { poolId: invitation.poolId, userId } },
+  });
+  if (existingMember) {
+    return {
+      id: existingMember.id,
+      poolId: existingMember.poolId,
+      userId: existingMember.userId,
+      role: existingMember.role,
+      isAlreadyMember: true,
+    };
+  }
+
+  if (invitation.status === InvitationStatus.ACCEPTED) {
+    return {
+      poolId: invitation.poolId,
+      isAlreadyMember: true,
+    };
   }
 
   if (invitation.expiresAt < new Date()) {
@@ -90,15 +167,7 @@ export async function acceptInvitation(rawToken: string, userId: string) {
     throw new AppError(403, 'You can only accept invitations sent to your email address', 'FORBIDDEN');
   }
 
-  // Check if user is already a member of this pool
-  const existingMember = await prisma.poolMember.findUnique({
-    where: { poolId_userId: { poolId: invitation.poolId, userId } },
-  });
-  if (existingMember) {
-    throw new AppError(409, 'You are already a member of this pool', 'ALREADY_A_MEMBER');
-  }
-
-  // Transaction: mark invitation accepted + add pool member
+  // Transaction: mark invitation accepted + add pool member + persist agreed split
   const member = await prisma.$transaction(async (tx) => {
     await tx.poolInvitation.update({
       where: { id: invitation.id },
@@ -122,7 +191,13 @@ export async function acceptInvitation(rawToken: string, userId: string) {
       let replaced = false;
       const remapped = (splitConfig.configuration as any[]).map((entry) => {
         if (!entry || typeof entry !== 'object') return entry;
-        if (entry.memberId === invitation.token || entry.memberId === invitation.id) {
+        const entryMemberId = String(entry.memberId);
+        if (
+          entryMemberId === invitation.token ||
+          entryMemberId === invitation.code ||
+          entryMemberId === invitation.id ||
+          (invitation.email && entryMemberId.toLowerCase() === invitation.email.toLowerCase())
+        ) {
           replaced = true;
           return { ...entry, memberId: newMember.id };
         }
@@ -141,6 +216,7 @@ export async function acceptInvitation(rawToken: string, userId: string) {
         await tx.splitConfiguration.update({
           where: { id: splitConfig.id },
           data: {
+            type: 'CUSTOM',
             configuration: Array.from(aggregated.entries()).map(([memberId, percentage]) => ({
               memberId,
               percentage: Math.round(percentage * 100) / 100,

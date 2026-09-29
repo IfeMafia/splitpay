@@ -666,7 +666,7 @@ export default function SplitPage({ params }: Props) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 16, borderBottom: "1px dashed rgba(0,0,0,0.08)", marginBottom: 16 }}>
                   <SummaryRow label="Gross Client Payment" value={formatAmount(breakdown.grossAmount, pool.currency)} />
                   <SummaryRow label="Payment Provider Processing (0%)" value={`- ${formatAmount(breakdown.providerFee, pool.currency)}`} color="#888" />
-                  <SummaryRow label="Platform Fee (1.5%)" value={`- ${formatAmount(breakdown.platformFee, pool.currency)}`} color="#888" />
+                  <SummaryRow label="Platform Fee (1.01%)" value={`- ${formatAmount(breakdown.platformFee, pool.currency)}`} color="#888" />
                   <SummaryRow label="Withholding Tax (0%)" value={`- ${formatAmount(breakdown.tax, pool.currency)}`} color="#888" />
 
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, paddingTop: 10, borderTop: "1px solid rgba(0,0,0,0.05)" }}>

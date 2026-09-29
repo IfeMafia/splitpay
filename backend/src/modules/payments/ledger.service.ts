@@ -1,7 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { verifyPaystackTransaction } from '../../lib/paystack';
-import { PaymentStatus, SplitType, Prisma } from '@prisma/client';
+import { PaymentStatus, SplitType, Prisma, PoolRole } from '@prisma/client';
 import { env } from '../../config/env';
 import { sendEmail } from '../../lib/mailer';
 import {
@@ -44,7 +44,7 @@ export interface FinancialChainBreakdown {
  */
 export function calculateFinancialChain(
   grossAmountNaira: number,
-  platformFeePercent: number = Number(process.env.PLATFORM_FEE_PERCENT || 5),
+  platformFeePercent: number = Number(process.env.PLATFORM_FEE_PERCENT || 1.01),
   providerFeeNaira?: number,
   collaborators: Array<{
     id: string;
@@ -109,7 +109,6 @@ export async function confirmPaymentTransaction(
         },
       },
       splitSnapshot: { include: { allocations: true } },
-      platformFee: true,
     },
   });
 
@@ -128,7 +127,7 @@ export async function confirmPaymentTransaction(
       : (snapshot.providerFee ? Math.round(Number(snapshot.providerFee) * 100) : 0);
     const platformFeeMinor = snapshot.platformFeeMinor
       ? Number(snapshot.platformFeeMinor)
-      : (snapshot.platformFee ? Math.round(Number(snapshot.platformFee) * 100) : (transaction.platformFee ? Number(transaction.platformFee.amountMinor) : 0));
+      : (snapshot.platformFee ? Math.round(Number(snapshot.platformFee) * 100) : 0);
     const taxMinor = snapshot.taxMinor ? Number(snapshot.taxMinor) : 0;
     const distributableMinor = snapshot.distributableAmountMinor
       ? Number(snapshot.distributableAmountMinor)
@@ -141,7 +140,7 @@ export async function confirmPaymentTransaction(
       providerFee: providerFeeMinor / 100,
       platformFeeMinor,
       platformFee: platformFeeMinor / 100,
-      platformFeePercent: snapshot.platformFeePercent ? Number(snapshot.platformFeePercent) : (transaction.platformFee ? Number(transaction.platformFee.feePercent) : 0),
+      platformFeePercent: snapshot.platformFeePercent ? Number(snapshot.platformFeePercent) : 0,
       taxMinor,
       tax: taxMinor / 100,
       distributableAmountMinor: distributableMinor,
@@ -200,10 +199,15 @@ export async function confirmPaymentTransaction(
 
   // 4. Build pool members for allocation
   const members = transaction.pool.members;
-  const splitConfig = await prisma.splitConfiguration.findFirst({
-    where: { poolId: transaction.poolId },
-    orderBy: { updatedAt: 'desc' },
-  });
+  const [splitConfig, poolInvitations] = await Promise.all([
+    prisma.splitConfiguration.findFirst({
+      where: { poolId: transaction.poolId },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    prisma.poolInvitation.findMany({
+      where: { poolId: transaction.poolId },
+    }),
+  ]);
 
   const configuredType = splitConfig?.type ?? SplitType.EQUAL;
   const equalSplit = members.length > 0 ? Math.round((100 / members.length) * 100) / 100 : 0;
@@ -222,23 +226,69 @@ export async function confirmPaymentTransaction(
       shareMap.set(String(item.memberId), Number(item.percentage));
     }
 
-    const customCollaborators = members.map((m) => ({
-      id: m.id,
-      userId: m.userId,
-      role: m.role,
-      splitPercentage: shareMap.get(m.id) ?? shareMap.get(m.userId) ?? NaN,
-    }));
+    const ownerMembers = members.filter((m) => m.role === PoolRole.OWNER || m.userId === transaction.pool.ownerId);
+    const nonOwnerMembers = members.filter((m) => m.role !== PoolRole.OWNER && m.userId !== transaction.pool.ownerId);
 
-    const hasAllPercentages = customCollaborators.every((m) => Number.isFinite(m.splitPercentage));
-    const totalPercentage = customCollaborators.reduce((sum, m) => sum + Number(m.splitPercentage), 0);
+    let nonOwnerAllocatedSum = 0;
+    const resolvedNonOwners = nonOwnerMembers.map((m) => {
+      let pct = shareMap.get(m.id) ?? shareMap.get(m.userId);
+      if (pct === undefined && m.user?.email) {
+        pct = shareMap.get(m.user.email.toLowerCase()) ?? shareMap.get(m.user.email);
+        if (pct === undefined) {
+          const matchedInv = poolInvitations.find(
+            (inv) => inv.email && inv.email.toLowerCase() === m.user.email.toLowerCase()
+          );
+          if (matchedInv) {
+            pct = shareMap.get(matchedInv.token) ?? shareMap.get(matchedInv.id) ?? (matchedInv.code ? shareMap.get(matchedInv.code) : undefined);
+          }
+        }
+      }
+      const finalPct = Number.isFinite(pct) ? Math.max(0, Number(pct)) : 0;
+      nonOwnerAllocatedSum += finalPct;
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        splitPercentage: finalPct,
+      };
+    });
 
-    if (hasAllPercentages && Math.abs(totalPercentage - 100) <= 0.01) {
+    const ownerRemainder = Math.max(0, Math.round((100 - nonOwnerAllocatedSum) * 100) / 100);
+    const resolvedOwners = ownerMembers.map((m) => {
+      if (ownerMembers.length === 1) {
+        return {
+          id: m.id,
+          userId: m.userId,
+          role: m.role,
+          splitPercentage: ownerRemainder,
+        };
+      }
+      const configuredPct = shareMap.get(m.id) ?? shareMap.get(m.userId);
+      const splitPct = Number.isFinite(configuredPct)
+        ? Number(configuredPct)
+        : Math.round((ownerRemainder / ownerMembers.length) * 100) / 100;
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        splitPercentage: splitPct,
+      };
+    });
+
+    const customCollaborators = [...resolvedOwners, ...resolvedNonOwners];
+    const totalCustomPercentage = customCollaborators.reduce((sum, m) => sum + Number(m.splitPercentage), 0);
+
+    if (Math.abs(totalCustomPercentage - 100) <= 1.0) {
+      const diff = Math.round((100 - totalCustomPercentage) * 100) / 100;
+      if (diff !== 0 && customCollaborators.length > 0) {
+        customCollaborators[0].splitPercentage = Math.round((customCollaborators[0].splitPercentage + diff) * 100) / 100;
+      }
       snapshotType = SplitType.CUSTOM;
       collaboratorsForCalc = customCollaborators;
     }
   }
 
-  const configuredPlatformFeePercent = Number(process.env.PLATFORM_FEE_PERCENT || 0);
+  const configuredPlatformFeePercent = Number(process.env.PLATFORM_FEE_PERCENT || 1.01);
 
   const breakdown = calculateFinancialChain(
     paystackData.amountInNaira,
@@ -262,19 +312,23 @@ export async function confirmPaymentTransaction(
     });
 
     // B. Record SplitPay platform fee record if applicable
-    if (breakdown.platformFeeMinor > 0) {
-      await tx.platformFee.create({
-        data: {
-          transactionId: transaction.id,
-          poolId: transaction.poolId,
-          grossAmountMinor: BigInt(breakdown.grossAmountMinor),
-          feePercent: new Prisma.Decimal(breakdown.platformFeePercent),
-          amountMinor: BigInt(breakdown.platformFeeMinor),
-          amount: new Prisma.Decimal(breakdown.platformFee),
-          currency: transaction.currency,
-          status: PaymentStatus.SUCCESSFUL,
-        },
-      });
+    if (breakdown.platformFeeMinor > 0 && (tx as any).platformFee) {
+      try {
+        await (tx as any).platformFee.create({
+          data: {
+            transactionId: transaction.id,
+            poolId: transaction.poolId,
+            grossAmountMinor: BigInt(breakdown.grossAmountMinor),
+            feePercent: new Prisma.Decimal(breakdown.platformFeePercent),
+            amountMinor: BigInt(breakdown.platformFeeMinor),
+            amount: new Prisma.Decimal(breakdown.platformFee),
+            currency: transaction.currency,
+            status: PaymentStatus.SUCCESSFUL,
+          },
+        });
+      } catch (feeErr) {
+        console.warn('[Ledger] PlatformFee record write skipped:', feeErr);
+      }
     }
 
     // C. Create SplitSnapshot (immutable freeze with minor units)

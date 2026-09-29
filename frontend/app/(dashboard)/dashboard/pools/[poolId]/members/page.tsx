@@ -48,6 +48,7 @@ interface FormErrors {
 interface InviteCode {
   code: string;
   expiresAt?: string;
+  splitPercentage?: number;
 }
 
 /* ─── Page ────────────────────────────────────── */
@@ -80,6 +81,8 @@ export default function MembersPage({ params }: Props) {
   const [codeInviteError, setCodeInviteError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
   const [showCodeSection, setShowCodeSection] = useState(false);
+  const [codeSplitPct, setCodeSplitPct] = useState("");
+  const [codeSplitTouched, setCodeSplitTouched] = useState(false);
 
   // Remove state
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -120,7 +123,10 @@ export default function MembersPage({ params }: Props) {
       setCollaborators(list);
 
       if (codeData && codeData.code) {
-        setInviteCode({ code: codeData.code, expiresAt: codeData.expiresAt });
+        setInviteCode({ code: codeData.code, expiresAt: codeData.expiresAt, splitPercentage: (codeData as any).splitPercentage ?? 0 });
+        if ((codeData as any).splitPercentage > 0) {
+          setCodeSplitPct(String((codeData as any).splitPercentage));
+        }
       }
 
       setPageState("ready");
@@ -140,6 +146,7 @@ export default function MembersPage({ params }: Props) {
     else {
       const n = Number(splitPct);
       if (isNaN(n) || n <= 0 || n > 100) errs.splitPercentage = "Enter a value between 0.01 and 100.";
+      else if (n > ownerRemainingPct) errs.splitPercentage = `Exceeds available owner share. Owner has ${ownerRemainingPct.toFixed(2)}% left.`;
     }
     return errs;
   }
@@ -250,15 +257,26 @@ export default function MembersPage({ params }: Props) {
   }
 
   async function handleGenerateCode() {
+    const pct = Number(codeSplitPct);
+    if (codeSplitPct && (isNaN(pct) || pct <= 0 || pct > 99.99)) {
+      setCodeInviteError("Split percentage must be between 0.01 and 99.99.");
+      setCodeSplitTouched(true);
+      return;
+    }
+    if (codeSplitPct && pct > ownerRemainingPct) {
+      setCodeInviteError(`Cannot allocate ${pct}% — owner only has ${ownerRemainingPct.toFixed(2)}% available.`);
+      setCodeSplitTouched(true);
+      return;
+    }
     setCodeInviteState("generating");
     setCodeInviteError("");
     try {
       const result = await api.post<Collaborator & { code?: string }>("/collaborators", {
         projectId: poolId,
         role: "Collaborator",
-        splitPercentage: 0,
+        splitPercentage: pct || 0,
       });
-      setInviteCode({ code: result.code || result.id });
+      setInviteCode({ code: result.code || result.id, splitPercentage: pct || 0 });
       setCodeInviteState("success");
       setShowCodeSection(true);
     } catch (err) {
@@ -285,6 +303,17 @@ export default function MembersPage({ params }: Props) {
     toast.success("Invite link copied to clipboard!");
     setTimeout(() => setLinkCopied(false), 2000);
   }
+
+  // Owner's share = 100% minus every non-owner confirmed/pending allocation
+  // We compute it from the collaborator list returned by the API (which already has correct splitPercentage)
+  const ownerCollab = collaborators.find(c => c.role === "OWNER" || c.role === "Owner");
+  const nonOwnerAllocated = collaborators
+    .filter(c => c.role !== "OWNER" && c.role !== "Owner")
+    .reduce((s, c) => s + Number(c.splitPercentage), 0);
+  // Also account for the existing code invite's allocation (if pending and not yet in collaborators list)
+  const codeAlloc = inviteCode?.splitPercentage ?? 0;
+  // ownerRemainingPct = how much the owner still has to give away
+  const ownerRemainingPct = Math.max(0, Math.round((100 - nonOwnerAllocated) * 100) / 100);
 
   const totalSplit = collaborators.reduce((s, c) => s + Number(c.splitPercentage), 0);
   const isSubmitting = inviteState === "submitting";
@@ -428,6 +457,28 @@ export default function MembersPage({ params }: Props) {
 
           {inviteCode ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Agreed split badge */}
+              {(inviteCode.splitPercentage ?? 0) > 0 && (
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "12px 16px", borderRadius: 10,
+                  background: "linear-gradient(135deg, rgba(37,99,235,0.06) 0%, rgba(37,99,235,0.02) 100%)",
+                  border: "1px solid rgba(37,99,235,0.18)",
+                }}>
+                  <div>
+                    <p style={{ fontSize: 11.5, fontWeight: 600, color: "#2563EB", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>
+                      Agreed Split Share
+                    </p>
+                    <p style={{ fontSize: 11, color: "#555" }}>
+                      Anyone who joins with this code will receive exactly this share.
+                    </p>
+                  </div>
+                  <span style={{ fontSize: 22, fontWeight: 700, color: "#2563EB", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+                    {inviteCode.splitPercentage}%
+                  </span>
+                </div>
+              )}
+
               {/* Prominent Invite Code */}
               <div>
                 <p style={{ fontSize: 11.5, fontWeight: 500, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
@@ -511,8 +562,7 @@ export default function MembersPage({ params }: Props) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
               <p style={{ fontSize: 11.5, color: "#999", margin: 0 }}>Code & link expire in 7 days.</p>
                 <button
-                  onClick={handleGenerateCode}
-                  disabled={codeInviteState === "generating"}
+                  onClick={() => { setInviteCode(null); setCodeSplitPct(""); setCodeInviteState("idle"); }}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     padding: "6px 12px", borderRadius: 7,
@@ -526,24 +576,66 @@ export default function MembersPage({ params }: Props) {
               </div>
             </div>
           ) : (
-            <button
-              onClick={handleGenerateCode}
-              disabled={codeInviteState === "generating"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 7,
-                padding: "10px 20px", borderRadius: 100,
-                background: codeInviteState === "generating" ? "#555" : "#0A0A0A",
-                color: "#fff", border: "none",
-                fontSize: 13, fontWeight: 500,
-                cursor: codeInviteState === "generating" ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              {codeInviteState === "generating" ? <><Spinner /> Generating…</> : "Generate invite code"}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Split % for code invite */}
+              <div>
+                <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, color: "#555", marginBottom: 6 }}>
+                  Agreed Split Percentage <span style={{ color: "#bbb", fontWeight: 400 }}>(optional — leave blank for owner to set later)</span>
+                </label>
+                <div style={{ position: "relative", maxWidth: 200 }}>
+                  <input
+                    type="number"
+                    min="0.01"
+                    max="99.99"
+                    step="0.01"
+                    value={codeSplitPct}
+                    onChange={e => { setCodeSplitPct(e.target.value); setCodeSplitTouched(true); setCodeInviteError(""); }}
+                    placeholder="e.g. 35"
+                    style={{
+                      width: "100%", padding: "9px 30px 9px 12px", borderRadius: 8,
+                      border: `1px solid ${codeSplitTouched && codeSplitPct && (Number(codeSplitPct) <= 0 || Number(codeSplitPct) > 99.99) ? "rgba(220,38,38,0.5)" : "rgba(0,0,0,0.12)"}`,
+                      fontSize: 13, fontFamily: "var(--font-mono)", outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                  <span style={{
+                    position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                    fontSize: 13, color: "#bbb", pointerEvents: "none",
+                  }}>%</span>
+                </div>
+                {codeSplitTouched && codeSplitPct && (Number(codeSplitPct) <= 0 || Number(codeSplitPct) > 99.99) && (
+                  <p style={{ fontSize: 11.5, color: "#DC2626", marginTop: 4 }}>
+                    Enter a value between 0.01 and 99.99
+                  </p>
+                )}
+                <p style={{ fontSize: 11.5, color: "#aaa", marginTop: 5, lineHeight: 1.5 }}>
+                  Set this before sharing. Owner currently has{" "}
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: ownerRemainingPct === 0 ? "#DC2626" : ownerRemainingPct < 20 ? "#D97706" : "#16A34A" }}>
+                    {ownerRemainingPct.toFixed(2)}%
+                  </span>{" "}
+                  available to allocate.
+                </p>
+              </div>
+
+              <button
+                onClick={handleGenerateCode}
+                disabled={codeInviteState === "generating"}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 7,
+                  padding: "10px 20px", borderRadius: 100, alignSelf: "flex-start",
+                  background: codeInviteState === "generating" ? "#555" : "#0A0A0A",
+                  color: "#fff", border: "none",
+                  fontSize: 13, fontWeight: 500,
+                  cursor: codeInviteState === "generating" ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {codeInviteState === "generating" ? <><Spinner /> Generating…</> : "Generate invite code"}
+              </button>
+            </div>
           )}
         </div>
       )}
+
 
       {/* ── Invite form ── */}
       {showForm && (
@@ -658,14 +750,25 @@ export default function MembersPage({ params }: Props) {
               </Field>
             </div>
 
-            {/* Allocation hint */}
-            {collaborators.length > 0 && (
+            {/* Owner availability hint */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
               <p style={{ fontSize: 11.5, color: "#bbb" }}>
-                Currently allocated: <span style={{ fontFamily: "var(--font-mono)", color: totalSplit > 100 ? "#DC2626" : "#888" }}>
-                  {formatPercent(totalSplit)}
-                </span> of 100%
+                Owner share remaining:{" "}
+                <span style={{ fontFamily: "var(--font-mono)", color: ownerRemainingPct === 0 ? "#DC2626" : ownerRemainingPct < 20 ? "#D97706" : "#16A34A", fontWeight: 500 }}>
+                  {ownerRemainingPct.toFixed(2)}%
+                </span>
+                {ownerRemainingPct === 0 && " — owner has nothing left to allocate"}
               </p>
-            )}
+              {collaborators.length > 0 && (
+                <p style={{ fontSize: 11.5, color: "#bbb" }}>
+                  Total allocated:{" "}
+                  <span style={{ fontFamily: "var(--font-mono)", color: totalSplit > 100 ? "#DC2626" : "#888" }}>
+                    {formatPercent(totalSplit)}
+                  </span>
+                  {" "}of 100%
+                </p>
+              )}
+            </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
               <button
