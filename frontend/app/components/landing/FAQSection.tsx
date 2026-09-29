@@ -8,12 +8,20 @@ const faqs = [
     a: "Splitpay is a payment-distribution platform for collaborative projects. A Pool creator adds collaborators, defines the agreed split, and creates one payment link. Once verified, Splitpay records the exact allocation for each collaborator automatically.",
   },
   {
+    q: "How much does Splitpay cost?",
+    a: "Splitpay charges a transparent 1.01% base platform fee only when a client payment is confirmed. There are zero monthly subscriptions, zero sign-up fees, and zero hidden costs.",
+  },
+  {
+    q: "Can I pass the transaction fees to my client?",
+    a: "Yes! When creating a payment link, you can choose 'Add fee to client'. Splitpay automatically grosses up the invoice so the client covers all processing costs and your pool receives 100% of your target payout.",
+  },
+  {
     q: "Who decides the split percentage?",
     a: "The collaborators do. Splitpay doesn't decide who owns what — the Pool creator configures the agreed percentages, and Splitpay enforces and records them.",
   },
   {
     q: "How does payment verification work?",
-    a: "Every payment is verified server-side before any allocations are created. Nothing is processed based solely on what the client reports — it's independently confirmed.",
+    a: "Every payment is verified server-side before any allocations are created. Nothing is processed based solely on what the client reports — it's independently confirmed with the payment gateway.",
   },
   {
     q: "What happens after a payment is received?",
@@ -21,7 +29,7 @@ const faqs = [
   },
   {
     q: "How do collaborators withdraw their share?",
-    a: "Collaborators can view their available balance and request a withdrawal at any time — no manual intervention from the pool creator required.",
+    a: "Collaborators can view their available balance and request a direct withdrawal to their bank account at any time — no manual intervention from the pool creator required.",
   },
 ];
 
