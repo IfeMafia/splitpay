@@ -7,7 +7,7 @@ export default function HeroSection() {
 
   const handleCopy = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText("https://splitpay.io/p/highland-session");
+      navigator.clipboard.writeText("https://splitpay.io/p/brand-redesign-q4");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -72,7 +72,7 @@ export default function HeroSection() {
               marginBottom: 26,
               maxWidth: 420,
             }}>
-              Share one payment link with your client. When they pay, Splitpay automatically calculates and records each collaborator&apos;s allocation with server-verified accuracy.
+              Your team agrees on how the payment should be split. You send the client one link. They pay — and every collaborator&apos;s share is automatically set aside for them to withdraw. No manual transfers, no chasing, no spreadsheets.
             </p>
 
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -172,21 +172,21 @@ export default function HeroSection() {
                   </span>
                 </div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
-                  $4,800.00
+                  ₦480,000
                 </span>
               </div>
 
               <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", color: "#0A0A0A", marginBottom: 14 }}>
-                Highland Studio Session
+                Brand Redesign · Q4
               </div>
 
               {/* Splits List */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px" }}>
                 {[
-                  { role: "Producer", pct: 40, amt: "$1,920" },
-                  { role: "Vocalist", pct: 30, amt: "$1,440" },
-                  { role: "Songwriter", pct: 20, amt: "$960" },
-                  { role: "Mixer", pct: 10, amt: "$480" },
+                  { role: "Designer",    pct: 40, amt: "₦192,000" },
+                  { role: "Developer",   pct: 30, amt: "₦144,000" },
+                  { role: "Copywriter",  pct: 20, amt: "₦96,000" },
+                  { role: "Strategist",  pct: 10, amt: "₦48,000" },
                 ].map((s, i) => (
                   <div key={i}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
@@ -212,7 +212,7 @@ export default function HeroSection() {
               border: "1px solid #E8E5DF",
             }}>
               <span style={{ fontSize: 11, color: "#777", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                splitpay.io/p/highland-session
+                splitpay.io/p/brand-redesign-q4
               </span>
               <button
                 type="button"
@@ -349,14 +349,14 @@ export default function HeroSection() {
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#888" }}>
-                  Invoice Paid
+                  Payment Received
                 </span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#059669" }}>
-                  +$4,800.00
+                  +₦480,000
                 </span>
               </div>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: "#0A0A0A" }}>
-                4 allocations ready to withdraw
+                4 collaborators paid instantly
               </div>
             </div>
           </div>
@@ -426,7 +426,7 @@ export default function HeroSection() {
               fontWeight: 500,
               color: "#fff",
             }}>
-              Music · Design · Film
+              Design · Dev · Strategy · Creative
             </div>
           </div>
 

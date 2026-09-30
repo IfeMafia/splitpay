@@ -31,12 +31,14 @@ const DEMO_ALLOCATIONS = [
 interface Props {
   userName?: string;
   pools?: PoolResponse[];
+  initialBalances?: Record<string, PoolBalanceResponse>;
   notifications?: NotificationResponse[];
 }
 
 export default function PopulatedDashboard({
   userName = "User",
   pools,
+  initialBalances = {},
   notifications = [],
 }: Props) {
   const router = useRouter();
@@ -47,7 +49,13 @@ export default function PopulatedDashboard({
   const [showJoin, setShowJoin] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joinError, setJoinError] = useState("");
-  const [poolBalances, setPoolBalances] = useState<Record<string, PoolBalanceResponse>>({});
+  const [poolBalances, setPoolBalances] = useState<Record<string, PoolBalanceResponse>>(initialBalances);
+
+  useEffect(() => {
+    if (initialBalances && Object.keys(initialBalances).length > 0) {
+      setPoolBalances((prev) => ({ ...prev, ...initialBalances }));
+    }
+  }, [initialBalances]);
 
   useEffect(() => {
     if (!isRealData || !pools || pools.length === 0) return;

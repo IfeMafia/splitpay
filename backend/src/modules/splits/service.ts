@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { calculateAllocations } from './splitEngine';
+import { toMinorUnits, calculateMemberAvailableBalanceMinor } from './feeEngine';
 import { ConfigureSplitDto } from './validators';
 import {
   SplitConfigResponse,
@@ -275,24 +276,51 @@ export async function getPoolBalance(poolId: string): Promise<PoolBalanceRespons
     throw new AppError(404, 'Pool not found', 'NOT_FOUND');
   }
 
-  // Sum successful transactions
+  // 1. Sum successful transactions (gross received)
   const successfulTxs = await prisma.transaction.findMany({
     where: { poolId, status: PaymentStatus.SUCCESSFUL },
   });
-  const totalReceived = successfulTxs.reduce((sum, tx) => sum + Number(tx.amount), 0);
+  const totalGrossReceivedMinor = successfulTxs.reduce(
+    (sum, tx) => sum + toMinorUnits(tx.amountMinor, tx.amount),
+    0,
+  );
 
-  // Sum split snapshots distributable amounts
+  // 2. Sum split snapshots (provider fees, platform fees, tax, distributable)
   const snapshots = await prisma.splitSnapshot.findMany({
     where: { poolId },
   });
-  const distributableAmount = snapshots.reduce((sum, s) => sum + Number(s.distributableAmount), 0);
 
-  // All allocations for members
+  const totalProviderFeesMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.providerFeeMinor, s.providerFee),
+    0,
+  );
+
+  const totalPlatformFeesMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.platformFeeMinor, s.platformFee),
+    0,
+  );
+
+  const totalTaxMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.taxMinor, s.tax),
+    0,
+  );
+
+  const totalDistributableMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.distributableAmountMinor, s.distributableAmount),
+    0,
+  );
+
+  // 3. All allocations for members
   const allAllocations = await prisma.splitAllocation.findMany({
     where: { snapshot: { poolId } },
   });
 
-  // All withdrawals for members
+  const totalAllocatedMinor = allAllocations.reduce(
+    (sum, a) => sum + toMinorUnits(a.amountMinor, a.amount),
+    0,
+  );
+
+  // 4. Withdrawals
   const withdrawals = await prisma.withdrawal.findMany({
     where: {
       poolId,
@@ -300,40 +328,71 @@ export async function getPoolBalance(poolId: string): Promise<PoolBalanceRespons
     },
   });
 
-  const totalWithdrawn = withdrawals
+  const totalWithdrawnMinor = withdrawals
     .filter((w) => w.status === WithdrawalStatus.SUCCESSFUL)
-    .reduce((sum, w) => sum + Number(w.amount), 0);
+    .reduce((sum, w) => sum + toMinorUnits(w.amountMinor, w.amount), 0);
 
+  const totalPendingWithdrawalsMinor = withdrawals
+    .filter((w) => w.status === WithdrawalStatus.PENDING || w.status === WithdrawalStatus.PROCESSING)
+    .reduce((sum, w) => sum + toMinorUnits(w.amountMinor, w.amount), 0);
+
+  // 5. Calculate per-member balances
   const memberBalances = pool.members.map((member) => {
-    const memberAllocated = allAllocations
+    const memberAllocatedMinor = allAllocations
       .filter((a) => a.poolMemberId === member.id)
-      .reduce((sum, a) => sum + Number(a.amount), 0);
+      .reduce((sum, a) => sum + toMinorUnits(a.amountMinor, a.amount), 0);
 
-    const memberWithdrawn = withdrawals
-      .filter((w) => w.poolMemberId === member.id && w.status !== WithdrawalStatus.FAILED && w.status !== WithdrawalStatus.REVERSED)
-      .reduce((sum, w) => sum + Number(w.amount), 0);
+    const memberWithdrawnMinor = withdrawals
+      .filter((w) => w.poolMemberId === member.id && w.status === WithdrawalStatus.SUCCESSFUL)
+      .reduce((sum, w) => sum + toMinorUnits(w.amountMinor, w.amount), 0);
 
-    const availableBalance = Math.max(0, Math.round((memberAllocated - memberWithdrawn) * 100) / 100);
+    const memberPendingMinor = withdrawals
+      .filter(
+        (w) =>
+          w.poolMemberId === member.id &&
+          (w.status === WithdrawalStatus.PENDING || w.status === WithdrawalStatus.PROCESSING),
+      )
+      .reduce((sum, w) => sum + toMinorUnits(w.amountMinor, w.amount), 0);
+
+    const availableMinor = calculateMemberAvailableBalanceMinor(
+      memberAllocatedMinor,
+      memberWithdrawnMinor,
+      memberPendingMinor,
+    );
 
     return {
       poolMemberId: member.id,
       userId: member.userId,
       fullName: member.user.fullName,
-      allocatedAmount: Math.round(memberAllocated * 100) / 100,
-      withdrawnAmount: Math.round(memberWithdrawn * 100) / 100,
-      availableBalance,
+      allocatedAmount: memberAllocatedMinor / 100,
+      withdrawnAmount: memberWithdrawnMinor / 100,
+      pendingWithdrawalAmount: memberPendingMinor / 100,
+      availableBalance: availableMinor / 100,
     };
   });
 
-  const availableBalance = Math.max(0, Math.round((distributableAmount - totalWithdrawn) * 100) / 100);
+  const totalAvailableMinor = Math.max(
+    0,
+    totalDistributableMinor - totalWithdrawnMinor - totalPendingWithdrawalsMinor,
+  );
 
   return {
     poolId: pool.id,
     currency: pool.currency,
-    totalReceived: Math.round(totalReceived * 100) / 100,
-    distributableAmount: Math.round(distributableAmount * 100) / 100,
-    withdrawnAmount: Math.round(totalWithdrawn * 100) / 100,
-    availableBalance,
+    totalGrossReceived: totalGrossReceivedMinor / 100,
+    totalProviderFees: totalProviderFeesMinor / 100,
+    totalPlatformFees: totalPlatformFeesMinor / 100,
+    totalTax: totalTaxMinor / 100,
+    totalDistributable: totalDistributableMinor / 100,
+    totalAllocated: totalAllocatedMinor / 100,
+    totalWithdrawn: totalWithdrawnMinor / 100,
+    totalPendingWithdrawals: totalPendingWithdrawalsMinor / 100,
+    totalAvailable: totalAvailableMinor / 100,
+    // Backward compatibility aliases
+    totalReceived: totalGrossReceivedMinor / 100,
+    distributableAmount: totalDistributableMinor / 100,
+    withdrawnAmount: totalWithdrawnMinor / 100,
+    availableBalance: totalAvailableMinor / 100,
     memberBalances,
   };
 }

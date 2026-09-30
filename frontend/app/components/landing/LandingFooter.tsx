@@ -19,8 +19,8 @@ export default function LandingFooter() {
         }}>
           {/* Left nav links */}
           <div className="footer-top-nav" style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center" }}>
-            {["Overview", "Features", "GitHub", "Devpost"].map(l => (
-              <a key={l} href="#" style={{
+            {["Overview", "How it works", "Features", "Pricing", "FAQ"].map(l => (
+              <a key={l} href={`#${l.toLowerCase().replace(/ /g, '-')}`} style={{
                 fontSize: 13, color: "#888", textDecoration: "none", fontWeight: 400,
                 transition: "color 140ms",
               }}
@@ -33,17 +33,14 @@ export default function LandingFooter() {
           </div>
 
           {/* Right — Project Link */}
-          <a href="https://github.com" target="_blank" rel="noopener noreferrer" style={{
-            fontSize: "clamp(18px, 3vw, 32px)",
-            fontWeight: 300, letterSpacing: "-0.03em",
-            color: "#FFF", textDecoration: "none",
-            transition: "color 140ms",
-          }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#C8FF57"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#FFF"; }}
-          >
-            github.com/splitpay
-          </a>
+          <span style={{
+            fontSize: "clamp(13px, 1.4vw, 15px)",
+            fontWeight: 300,
+            color: "#555",
+            letterSpacing: "-0.01em",
+          }}>
+            Payment distribution for collaborative teams.
+          </span>
         </div>
 
         {/* ── MIDDLE COLUMNS */}
@@ -58,14 +55,14 @@ export default function LandingFooter() {
           {/* Col 1 */}
           <div>
             <p style={{ fontSize: 13, color: "#888", lineHeight: 1.7, maxWidth: 260, fontWeight: 300 }}>
-              Payment allocation infrastructure for collaborative creative work. Built as an open-source project for the hackathon.
+              One payment link. Agreed splits. Everyone gets paid. Splitpay handles payment distribution for any team working together on a project.
             </p>
           </div>
 
           {/* Col 2 */}
           <div>
-            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", marginBottom: 16 }}>Project</div>
-            {["Source Code", "Documentation", "Devpost"].map(l => (
+            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", marginBottom: 16 }}>Product</div>
+            {["How it works", "Features", "FAQ", "Sign up"].map(l => (
               <div key={l} style={{ marginBottom: 10 }}>
                 <Link href="#" style={{ fontSize: 13, color: "#888", textDecoration: "none", transition: "color 140ms", fontWeight: 300 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#FFF"; }}
@@ -77,8 +74,8 @@ export default function LandingFooter() {
 
           {/* Col 3 */}
           <div>
-            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", marginBottom: 16 }}>Creators</div>
-            {["Team Profile", "Twitter", "LinkedIn"].map(l => (
+            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase", color: "#666", marginBottom: 16 }}>Company</div>
+            {["About", "Contact", "Terms", "Privacy"].map(l => (
               <div key={l} style={{ marginBottom: 10 }}>
                 <Link href="#" style={{ fontSize: 13, color: "#888", textDecoration: "none", transition: "color 140ms", fontWeight: 300 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#FFF"; }}
@@ -113,7 +110,7 @@ export default function LandingFooter() {
           {/* Legal bottom right */}
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11.5, color: "#555", fontWeight: 300 }}>
-              Built for the Hackathon · {new Date().getFullYear()}
+              &copy; {new Date().getFullYear()} Splitpay. All rights reserved.
             </div>
           </div>
         </div>

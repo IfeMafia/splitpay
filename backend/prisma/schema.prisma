@@ -91,6 +91,7 @@ model Pool {
   splitConfigurations SplitConfiguration[]
   splitSnapshots      SplitSnapshot[]
   withdrawals         Withdrawal[]
+  platformFees        PlatformFee[]
 
   @@index([ownerId])
   @@map("pools")
@@ -160,6 +161,7 @@ model Transaction {
   poolId            String        @map("pool_id")
   paymentLinkId     String?       @map("payment_link_id")
   amount            Decimal       @db.Decimal(18, 2)
+  amountMinor       BigInt?       @map("amount_minor")
   currency          String        @default("NGN")
   provider          String        @default("paystack")
   providerReference String?       @unique @map("provider_reference")
@@ -175,6 +177,7 @@ model Transaction {
   paymentLink   PaymentLink?       @relation(fields: [paymentLinkId], references: [id], onDelete: SetNull)
   events        TransactionEvent[]
   splitSnapshot SplitSnapshot?
+  platformFee   PlatformFee?
 
   @@index([poolId])
   @@index([providerReference])
@@ -209,14 +212,24 @@ model SplitConfiguration {
 }
 
 model SplitSnapshot {
-  id                  String    @id @default(uuid())
-  poolId              String    @map("pool_id")
-  transactionId       String    @unique @map("transaction_id")
-  type                SplitType
-  snapshotData        Json      @map("snapshot_data")
-  totalAmount         Decimal   @map("total_amount") @db.Decimal(18, 2)
-  distributableAmount Decimal   @map("distributable_amount") @db.Decimal(18, 2)
-  createdAt           DateTime  @default(now()) @map("created_at")
+  id                       String    @id @default(uuid())
+  poolId                   String    @map("pool_id")
+  transactionId            String    @unique @map("transaction_id")
+  type                     SplitType
+  snapshotData             Json      @map("snapshot_data")
+  totalAmount              Decimal   @map("total_amount") @db.Decimal(18, 2)
+  distributableAmount      Decimal   @map("distributable_amount") @db.Decimal(18, 2)
+  grossAmountMinor         BigInt?   @map("gross_amount_minor")
+  providerFeeMinor         BigInt?   @map("provider_fee_minor")
+  platformFeeMinor         BigInt?   @map("platform_fee_minor")
+  taxMinor                 BigInt?   @default(0) @map("tax_minor")
+  distributableAmountMinor BigInt?   @map("distributable_amount_minor")
+  platformFeePercent       Decimal?  @map("platform_fee_percent") @db.Decimal(5, 2)
+  providerFee              Decimal?  @map("provider_fee") @db.Decimal(18, 2)
+  platformFee              Decimal?  @map("platform_fee") @db.Decimal(18, 2)
+  tax                      Decimal?  @default(0) @db.Decimal(18, 2)
+  calculationVersion       String?   @default("v2") @map("calculation_version")
+  createdAt                DateTime  @default(now()) @map("created_at")
 
   pool        Pool              @relation(fields: [poolId], references: [id], onDelete: Cascade)
   transaction Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
@@ -232,6 +245,7 @@ model SplitAllocation {
   poolMemberId String           @map("pool_member_id")
   percentage   Decimal          @db.Decimal(5, 2)
   amount       Decimal          @db.Decimal(18, 2)
+  amountMinor  BigInt?          @map("amount_minor")
   currency     String           @default("NGN")
   status       AllocationStatus @default(ALLOCATED)
   createdAt    DateTime         @default(now()) @map("created_at")
@@ -244,11 +258,34 @@ model SplitAllocation {
   @@map("split_allocations")
 }
 
+model PlatformFee {
+  id               String        @id @default(uuid())
+  transactionId    String        @unique @map("transaction_id")
+  poolId           String        @map("pool_id")
+  grossAmountMinor BigInt        @map("gross_amount_minor")
+  feePercent       Decimal       @db.Decimal(5, 2) @map("fee_percent")
+  amountMinor      BigInt        @map("amount_minor")
+  amount           Decimal       @db.Decimal(18, 2)
+  currency         String        @default("NGN")
+  status           PaymentStatus @default(SUCCESSFUL)
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  pool        Pool        @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  @@index([poolId])
+  @@index([createdAt])
+  @@map("platform_fees")
+}
+
 model Withdrawal {
   id                String           @id @default(uuid())
   poolId            String           @map("pool_id")
   poolMemberId      String           @map("pool_member_id")
   amount            Decimal          @db.Decimal(18, 2)
+  amountMinor       BigInt?          @map("amount_minor")
+  transferFeeMinor  BigInt?          @default(0) @map("transfer_fee_minor")
+  stampDutyMinor    BigInt?          @default(0) @map("stamp_duty_minor")
   currency          String           @default("NGN")
   status            WithdrawalStatus @default(PENDING)
   providerReference String?          @unique @map("provider_reference")

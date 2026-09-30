@@ -7,6 +7,10 @@ import StatusBadge from "../../../../../components/ui/StatusBadge";
 import { formatAmount, formatDate, formatRelativeTime } from "../../../../../lib/format";
 import { toast } from "@/app/components/Toast";
 import { getUser } from "@/app/lib/auth";
+import {
+  calculateGrossUpClientBearsFees,
+  calculateDeductionsMerchantBearsFees,
+} from "@/app/lib/fees";
 import ConfirmModal from "@/app/components/ui/ConfirmModal";
 import PoolNavTabs from "../../_components/PoolNavTabs";
 
@@ -34,6 +38,18 @@ interface Payment {
   createdAt: string;
 }
 
+interface Collaborator {
+  id: string;
+  userId?: string | null;
+  invitedEmail?: string | null;
+  role: string;
+  splitPercentage: number | string;
+  user?: {
+    fullName?: string | null;
+    email?: string;
+  };
+}
+
 interface CreateResult {
   payment: Payment;
   checkoutUrl: string;
@@ -44,7 +60,7 @@ interface Props {
 }
 
 type PageState = "loading" | "ready" | "error";
-type CreateState = "idle" | "submitting" | "success" | "error";
+type CreateState = "idle" | "reviewing" | "submitting" | "success" | "error";
 
 /* ─── Page ────────────────────────────────────── */
 
@@ -53,13 +69,18 @@ export default function PaymentsPage({ params }: Props) {
 
   const [pageState, setPageState] = useState<PageState>("loading");
   const [pool, setPool] = useState<Pool | null>(null);
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
   const [showForm, setShowForm] = useState(false);
+  const [formStep, setFormStep] = useState<"input" | "confirm">("input");
+  const [feeMode, setFeeMode] = useState<"add_fee" | "include_fee">("add_fee");
   const [provider] = useState("paystack");
-  const [expectedAmount, setExpectedAmount] = useState("");
+  const [inputAmount, setInputAmount] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [createState, setCreateState] = useState<CreateState>("idle");
   const [createError, setCreateError] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -82,6 +103,17 @@ export default function PaymentsPage({ params }: Props) {
 
   const currentUser = getUser();
   const isOwner = Boolean(pool && currentUser && currentUser.id === pool.ownerId);
+
+  // Full Gross-up & Complete Fee Calculations (SplitPay 1.01% + Paystack 1.5% + ₦100)
+  const rawNum = parseFloat(inputAmount) || 0;
+  const feeCalc = feeMode === "add_fee"
+    ? calculateGrossUpClientBearsFees(rawNum)
+    : calculateDeductionsMerchantBearsFees(rawNum);
+
+  const poolPayoutAmount = feeCalc.netDistributable;
+  const platformFeeAmount = feeCalc.platformFee;
+  const gatewayFeeAmount = feeCalc.gatewayFee;
+  const totalClientAmount = feeCalc.grossClientAmount;
 
   function handleNullifyLinkPrompt(paymentId: string, token: string) {
     setModalConfig({
@@ -107,12 +139,14 @@ export default function PaymentsPage({ params }: Props) {
   const load = useCallback(async () => {
     setPageState("loading");
     try {
-      const [poolData, paymentData] = await Promise.all([
+      const [poolData, paymentData, collabData] = await Promise.all([
         api.get<Pool>(`/projects/${poolId}`),
         api.get<Payment[]>(`/payments/project/${poolId}`).catch(() => [] as Payment[]),
+        api.get<Collaborator[]>(`/collaborators/project/${poolId}`).catch(() => [] as Collaborator[]),
       ]);
       setPool(poolData);
       setPayments(Array.isArray(paymentData) ? paymentData : []);
+      setCollaborators(Array.isArray(collabData) ? collabData : []);
       setPageState("ready");
     } catch (err) {
       if (err instanceof ApiError) setErrorStatus(err.status);
@@ -123,11 +157,21 @@ export default function PaymentsPage({ params }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleCreate() {
+  function handleProceedToReview() {
     if (!pool) return;
-    const amount = Number(expectedAmount);
-    if (isNaN(amount) || amount <= 0) {
+    if (rawNum <= 0) {
       setCreateError("Please enter a valid amount.");
+      setCreateState("error");
+      return;
+    }
+    setCreateError("");
+    setFormStep("confirm");
+  }
+
+  async function handleFinalCreate() {
+    if (!pool) return;
+    if (totalClientAmount <= 0) {
+      setCreateError("Invalid amount.");
       setCreateState("error");
       return;
     }
@@ -136,14 +180,21 @@ export default function PaymentsPage({ params }: Props) {
     try {
       const result = await api.post<CreateResult>("/payments/link", {
         projectId: poolId,
-        expectedAmount: amount,
+        expectedAmount: totalClientAmount,
         currency: pool.currency,
         provider,
+        title: title.trim() || undefined,
+        description: description.trim() || undefined,
       });
       setPayments(prev => [result.payment, ...prev]);
       setCreateState("success");
       setShowForm(false);
+      setFormStep("input");
+      setInputAmount("");
+      setTitle("");
+      setDescription("");
       setTimeout(() => setCreateState("idle"), 3000);
+      toast.success("Payment link generated with full fee protection.");
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create payment link.");
       setCreateState("error");
@@ -281,93 +332,348 @@ export default function PaymentsPage({ params }: Props) {
         </div>
       )}
 
-      {/* Create form — inline confirm */}
+      {/* Create form — 2-step confirmation with 1.01% base fee */}
       {showForm && (
         <div style={{
-          marginBottom: 24, padding: "20px 22px", borderRadius: 14,
-          border: "1px solid rgba(0,0,0,0.12)", background: "#fff",
+          marginBottom: 24, padding: "22px 24px", borderRadius: 16,
+          border: "1px solid rgba(0,0,0,0.10)", background: "#fff",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.03)",
         }}>
+          {/* Form Header */}
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
             <div>
-              <p style={{ fontSize: 13.5, fontWeight: 500, color: "#0A0A0A", marginBottom: 4 }}>Create a payment link</p>
-              <p style={{ fontSize: 12.5, color: "#999", lineHeight: 1.55 }}>
-                A unique payment link will be generated for this Pool. Share it with your client to collect payment.
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+                  padding: "2px 8px", borderRadius: 100, background: "rgba(0,0,0,0.06)", color: "#0A0A0A",
+                }}>
+                  {formStep === "input" ? "Step 1: Set Amount & Fee" : "Step 2: Review & Confirm"}
+                </span>
+                <span style={{ fontSize: 11, color: "#aaa" }}>1.01% Base Fee</span>
+              </div>
+              <p style={{ fontSize: 15, fontWeight: 600, color: "#0A0A0A", letterSpacing: "-0.015em" }}>
+                {formStep === "input" ? "Create client payment link" : "Confirm payment link details"}
               </p>
             </div>
             <button
-              onClick={() => { setShowForm(false); setCreateState("idle"); setCreateError(""); }}
+              onClick={() => { setShowForm(false); setFormStep("input"); setCreateState("idle"); setCreateError(""); }}
               style={{ background: "none", border: "none", cursor: "pointer", color: "#bbb", padding: 4 }}
             >
               <CloseIcon />
             </button>
           </div>
 
-          {/* Summary */}
-          <div style={{
-            padding: "12px 14px", borderRadius: 9,
-            background: "#FAFAFA", border: "1px solid rgba(0,0,0,0.07)",
-            marginBottom: 16, display: "flex", flexDirection: "column", gap: 6,
-          }}>
-            <Row label="Pool">{pool.name}</Row>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <span style={{ fontSize: 12, color: "#bbb" }}>Expected amount</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 13, color: "#555", fontWeight: 500 }}>{pool.currency}</span>
-                <input
-                  type="number"
-                  value={expectedAmount}
-                  onChange={e => setExpectedAmount(e.target.value)}
-                  placeholder="0.00"
+          {formStep === "input" ? (
+            <div>
+              {/* Amount Input */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#666", marginBottom: 6 }}>
+                  Target Amount ({pool.currency})
+                </label>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 14px", borderRadius: 10,
+                  border: "1px solid rgba(0,0,0,0.12)", background: "#FAFAFA",
+                }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                    {pool.currency === "NGN" ? "₦" : pool.currency}
+                  </span>
+                  <input
+                    type="number"
+                    value={inputAmount}
+                    onChange={e => { setInputAmount(e.target.value); setCreateError(""); }}
+                    placeholder="e.g. 100000"
+                    autoFocus
+                    style={{
+                      flex: 1, border: "none", background: "transparent",
+                      fontSize: 16, fontWeight: 500, fontFamily: "var(--font-mono)",
+                      color: "#0A0A0A", outline: "none",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Fee Mode Toggle */}
+              <div style={{
+                padding: "12px 14px", borderRadius: 10,
+                background: "rgba(0,0,0,0.02)", border: "1px solid rgba(0,0,0,0.06)",
+                marginBottom: 16,
+              }}>
+                <p style={{ fontSize: 11.5, fontWeight: 600, color: "#555", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  Fee Distribution Mode
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setFeeMode("add_fee")}
+                    style={{
+                      padding: "10px 12px", borderRadius: 8, textAlign: "left", cursor: "pointer",
+                      border: feeMode === "add_fee" ? "1.5px solid #0A0A0A" : "1px solid rgba(0,0,0,0.08)",
+                      background: feeMode === "add_fee" ? "#fff" : "transparent",
+                      boxShadow: feeMode === "add_fee" ? "0 2px 8px rgba(0,0,0,0.05)" : "none",
+                      transition: "all 120ms ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: "#0A0A0A" }}>Add fee to client</span>
+                      {feeMode === "add_fee" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#16A34A" }} />}
+                    </div>
+                    <p style={{ fontSize: 11, color: "#777", margin: 0, lineHeight: 1.4 }}>
+                      Client pays +1.01% fee on top. Pool receives 100% of target.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFeeMode("include_fee")}
+                    style={{
+                      padding: "10px 12px", borderRadius: 8, textAlign: "left", cursor: "pointer",
+                      border: feeMode === "include_fee" ? "1.5px solid #0A0A0A" : "1px solid rgba(0,0,0,0.08)",
+                      background: feeMode === "include_fee" ? "#fff" : "transparent",
+                      boxShadow: feeMode === "include_fee" ? "0 2px 8px rgba(0,0,0,0.05)" : "none",
+                      transition: "all 120ms ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: "#0A0A0A" }}>Include in price</span>
+                      {feeMode === "include_fee" && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#16A34A" }} />}
+                    </div>
+                    <p style={{ fontSize: 11, color: "#777", margin: 0, lineHeight: 1.4 }}>
+                      1.01% fee deducted from entered amount. Client pays exact figure.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Optional Title & Description */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11.5, fontWeight: 500, color: "#777", marginBottom: 4 }}>
+                    Link Title (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="e.g. Milestone 1 Payment"
+                    style={{
+                      width: "100%", padding: "8px 10px", borderRadius: 8,
+                      border: "1px solid rgba(0,0,0,0.10)", background: "#FAFAFA",
+                      fontSize: 12.5, color: "#0A0A0A", outline: "none",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11.5, fontWeight: 500, color: "#777", marginBottom: 4 }}>
+                    Invoice Note for Client (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    placeholder="e.g. Design sprint deliverables"
+                    style={{
+                      width: "100%", padding: "8px 10px", borderRadius: 8,
+                      border: "1px solid rgba(0,0,0,0.10)", background: "#FAFAFA",
+                      fontSize: 12.5, color: "#0A0A0A", outline: "none",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Real-time Calculation Breakdown Preview */}
+              {rawNum > 0 && (
+                <div style={{
+                  padding: "16px 18px", borderRadius: 12,
+                  background: "#F8FAFC", border: "1px solid rgba(0,0,0,0.06)",
+                  marginBottom: 16,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 12.5, color: "#64748B" }}>Pool Distributable Target</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: "#16A34A", fontFamily: "var(--font-mono)" }}>
+                      {formatAmount(poolPayoutAmount, pool.currency)}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: "#64748B" }}>SplitPay Platform Fee (1.01%)</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "#2563EB", fontFamily: "var(--font-mono)" }}>
+                      +{formatAmount(platformFeeAmount, pool.currency)}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <span style={{ fontSize: 12, color: "#64748B" }}>Gateway Processing Fee (Paystack)</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: "#64748B", fontFamily: "var(--font-mono)" }}>
+                      +{formatAmount(gatewayFeeAmount, pool.currency)}
+                    </span>
+                  </div>
+                  <div style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    paddingTop: 10, borderTop: "1px solid rgba(0,0,0,0.07)",
+                  }}>
+                    <div>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#0A0A0A" }}>Total Charged to Client</span>
+                      <p style={{ fontSize: 10.5, color: "#94A3B8", margin: 0 }}>
+                        {feeMode === "add_fee" ? "Client covers all processing & platform fees" : "Fees deducted from price"}
+                      </p>
+                    </div>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                      {formatAmount(totalClientAmount, pool.currency)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {createState === "error" && createError && (
+                <div style={{
+                  display: "flex", alignItems: "flex-start", gap: 9,
+                  padding: "11px 14px", borderRadius: 8, marginBottom: 14,
+                  background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
+                }}>
+                  <AlertIcon />
+                  <p style={{ fontSize: 12.5, color: "#991B1B" }}>{createError}</p>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={handleProceedToReview}
                   style={{
-                    width: 120, padding: "6px 8px", borderRadius: 6,
-                    border: "1px solid rgba(0,0,0,0.12)", background: "#fff",
-                    fontSize: 13, fontFamily: "var(--font-mono)", textAlign: "right",
-                    outline: "none"
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "10px 22px", borderRadius: 100,
+                    background: "#0A0A0A", color: "#fff", border: "none",
+                    fontSize: 13, fontWeight: 500, cursor: "pointer",
+                    fontFamily: "var(--font-sans)", transition: "background 140ms",
                   }}
-                />
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#222"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+                >
+                  Review Fee & Details →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowForm(false); setCreateState("idle"); setCreateError(""); }}
+                  style={{ padding: "10px 16px", borderRadius: 100, background: "none", border: "none", color: "#888", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-            <Row label="Currency">{pool.currency}</Row>
-            <Row label="Payment provider">Paystack</Row>
-          </div>
+          ) : (
+            /* Confirm / Review Step */
+            <div>
+              <div style={{
+                padding: "18px 20px", borderRadius: 14,
+                background: "linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.95))",
+                border: "1px solid rgba(0,0,0,0.08)", marginBottom: 18,
+              }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+                  Client Payment Summary
+                </p>
 
-          {createState === "error" && createError && (
-            <div style={{
-              display: "flex", alignItems: "flex-start", gap: 9,
-              padding: "11px 14px", borderRadius: 8, marginBottom: 14,
-              background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
-            }}>
-              <AlertIcon />
-              <p style={{ fontSize: 12.5, color: "#991B1B" }}>{createError}</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, color: "#334155" }}>Total Client Checkout Invoice:</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: "#0A0A0A", fontFamily: "var(--font-mono)" }}>
+                      {formatAmount(totalClientAmount, pool.currency)}
+                    </span>
+                  </div>
+
+                  <div style={{ padding: "12px 14px", borderRadius: 10, background: "#fff", border: "1px solid rgba(0,0,0,0.06)", display: "flex", flexDirection: "column", gap: 7 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span style={{ color: "#64748B" }}>Paystack Gateway Card Processing:</span>
+                      <span style={{ fontWeight: 600, color: "#64748B", fontFamily: "var(--font-mono)" }}>
+                        −{formatAmount(gatewayFeeAmount, pool.currency)}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span style={{ color: "#64748B" }}>SplitPay Platform Base Fee (1.01%):</span>
+                      <span style={{ fontWeight: 600, color: "#2563EB", fontFamily: "var(--font-mono)" }}>
+                        −{formatAmount(platformFeeAmount, pool.currency)}
+                      </span>
+                    </div>
+                    <div style={{
+                      display: "flex", justifyContent: "space-between", fontSize: 13,
+                      paddingTop: 8, borderTop: "1px solid rgba(0,0,0,0.06)",
+                    }}>
+                      <span style={{ fontWeight: 600, color: "#0A0A0A" }}>Net Deposit Distributed to Pool:</span>
+                      <span style={{ fontWeight: 700, color: "#16A34A", fontFamily: "var(--font-mono)" }}>
+                        {formatAmount(poolPayoutAmount, pool.currency)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Collaborator Allocation Preview */}
+                  {collaborators.length > 0 && (
+                    <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: "#64748B", textTransform: "uppercase", marginBottom: 6 }}>
+                        Collaborator Distribution Preview:
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {collaborators.map(c => {
+                          const name = c.user?.fullName || c.invitedEmail || "Member";
+                          const pct = Number(c.splitPercentage) || 0;
+                          const share = Math.round(poolPayoutAmount * (pct / 100) * 100) / 100;
+                          return (
+                            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "#475569" }}>
+                              <span>{name} ({pct}%)</span>
+                              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>
+                                {formatAmount(share, pool.currency)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {createState === "error" && createError && (
+                <div style={{
+                  display: "flex", alignItems: "flex-start", gap: 9,
+                  padding: "11px 14px", borderRadius: 8, marginBottom: 14,
+                  background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.15)",
+                }}>
+                  <AlertIcon />
+                  <p style={{ fontSize: 12.5, color: "#991B1B" }}>{createError}</p>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={handleFinalCreate}
+                  disabled={createState === "submitting"}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    padding: "10px 24px", borderRadius: 100,
+                    background: createState === "submitting" ? "#555" : "#0A0A0A",
+                    color: "#fff", border: "none",
+                    fontSize: 13, fontWeight: 600,
+                    cursor: createState === "submitting" ? "not-allowed" : "pointer",
+                    fontFamily: "var(--font-sans)", transition: "background 140ms",
+                  }}
+                  onMouseEnter={e => { if (createState !== "submitting") (e.currentTarget as HTMLElement).style.background = "#222"; }}
+                  onMouseLeave={e => { if (createState !== "submitting") (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
+                >
+                  {createState === "submitting" ? <><Spinner /> Generating Link…</> : "Confirm & Generate Link"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormStep("input")}
+                  disabled={createState === "submitting"}
+                  style={{
+                    padding: "10px 16px", borderRadius: 100,
+                    background: "none", border: "1px solid rgba(0,0,0,0.10)",
+                    color: "#555", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  ← Back to Edit
+                </button>
+              </div>
             </div>
           )}
-
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              onClick={handleCreate}
-              disabled={createState === "submitting"}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 7,
-                padding: "10px 22px", borderRadius: 100,
-                background: createState === "submitting" ? "#555" : "#0A0A0A",
-                color: "#fff", border: "none",
-                fontSize: 13, fontWeight: 500,
-                cursor: createState === "submitting" ? "not-allowed" : "pointer",
-                fontFamily: "var(--font-sans)",
-                transition: "background 140ms",
-              }}
-              onMouseEnter={e => { if (createState !== "submitting") (e.currentTarget as HTMLElement).style.background = "#222"; }}
-              onMouseLeave={e => { if (createState !== "submitting") (e.currentTarget as HTMLElement).style.background = "#0A0A0A"; }}
-            >
-              {createState === "submitting" ? <><Spinner /> Generating…</> : "Generate link"}
-            </button>
-            <button
-              onClick={() => { setShowForm(false); setCreateState("idle"); setCreateError(""); }}
-              style={{ padding: "10px 16px", borderRadius: 100, background: "none", border: "none", color: "#888", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}
-            >
-              Cancel
-            </button>
-          </div>
         </div>
       )}
 

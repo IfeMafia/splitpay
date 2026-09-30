@@ -13,6 +13,9 @@ router.post('/', collaboratorController.createCollaborator);
 // List all collaborators (pending + confirmed) for a pool
 router.get('/project/:projectId', collaboratorController.getProjectCollaborators);
 
+// Get active invite code for a pool
+router.get('/project/:projectId/code', collaboratorController.getProjectInviteCode);
+
 // Revoke invitation or remove a pool member by id
 router.delete('/:id', collaboratorController.removeCollaborator);
 

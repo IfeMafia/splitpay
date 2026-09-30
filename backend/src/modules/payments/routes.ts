@@ -38,6 +38,7 @@ router.get("/callback", (req, res) => {
 
 // Protected routes
 router.use(authenticate);
+router.get("/revenue-report", paymentController.getRevenueReport);
 router.post(
   "/link",
   validateBody(createPaymentSchema),

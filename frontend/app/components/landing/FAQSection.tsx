@@ -8,12 +8,20 @@ const faqs = [
     a: "Splitpay is a payment-distribution platform for collaborative projects. A Pool creator adds collaborators, defines the agreed split, and creates one payment link. Once verified, Splitpay records the exact allocation for each collaborator automatically.",
   },
   {
+    q: "How much does Splitpay cost?",
+    a: "Splitpay charges a transparent 1.01% base platform fee only when a client payment is confirmed. There are zero monthly subscriptions, zero sign-up fees, and zero hidden costs.",
+  },
+  {
+    q: "Can I pass the transaction fees to my client?",
+    a: "Yes! When creating a payment link, you can choose 'Add fee to client'. Splitpay automatically grosses up the invoice so the client covers all processing costs and your pool receives 100% of your target payout.",
+  },
+  {
     q: "Who decides the split percentage?",
     a: "The collaborators do. Splitpay doesn't decide who owns what — the Pool creator configures the agreed percentages, and Splitpay enforces and records them.",
   },
   {
     q: "How does payment verification work?",
-    a: "Every payment is verified server-side before any allocations are created. Nothing is processed based solely on what the client reports — it's independently confirmed.",
+    a: "Every payment is verified server-side before any allocations are created. Nothing is processed based solely on what the client reports — it's independently confirmed with the payment gateway.",
   },
   {
     q: "What happens after a payment is received?",
@@ -21,7 +29,7 @@ const faqs = [
   },
   {
     q: "How do collaborators withdraw their share?",
-    a: "Collaborators can view their available balance and request a withdrawal at any time — no manual intervention from the pool creator required.",
+    a: "Collaborators can view their available balance and request a direct withdrawal to their bank account at any time — no manual intervention from the pool creator required.",
   },
 ];
 
@@ -57,7 +65,7 @@ export default function FAQSection() {
               </span>
             </h2>
             <p style={{ fontSize: 14, color: "#999", lineHeight: 1.7, maxWidth: 360, marginBottom: 40 }}>
-              Built for creative teams that work together and deserve to get paid together — without the admin overhead.
+              Built for any team that works together on a project and gets paid by a client — without the admin overhead.
             </p>
 
             {/* Photo — real, clean, no dark overlay */}
@@ -76,9 +84,9 @@ export default function FAQSection() {
                 border: "1px solid rgba(255,255,255,0.8)",
               }}>
                 <p style={{ fontSize: 13, fontWeight: 500, color: "#0A0A0A", lineHeight: 1.4, margin: 0, marginBottom: 4 }}>
-                  "Automated multi-party revenue splitting with server-verified records."
+                  &ldquo;One payment in. Every collaborator paid out. No manual transfers.&rdquo;
                 </p>
-                <div style={{ fontSize: 11, color: "#888" }}>Splitpay allocation protocol</div>
+                <div style={{ fontSize: 11, color: "#888" }}>How Splitpay works</div>
               </div>
             </div>
           </div>

@@ -98,3 +98,27 @@ export async function calculateFeePreview(
     next(err);
   }
 }
+
+export async function getRevenueReport(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { getPlatformRevenueSummary } = await import('./ledger.service');
+    const { poolId, startDate, endDate } = req.query as {
+      poolId?: string;
+      startDate?: string;
+      endDate?: string;
+    };
+    const report = await getPlatformRevenueSummary({
+      poolId,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+    });
+    res.status(200).json({ data: report });
+  } catch (err) {
+    next(err);
+  }
+}
+

@@ -1,9 +1,7 @@
 import { prisma } from '../../lib/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { verifyPaystackTransaction } from '../../lib/paystack';
-import { PaymentStatus } from '@prisma/client';
-import { Prisma } from '@prisma/client';
-import { SplitType } from '@prisma/client';
+import { PaymentStatus, SplitType, Prisma, PoolRole } from '@prisma/client';
 import { env } from '../../config/env';
 import { sendEmail } from '../../lib/mailer';
 import {
@@ -11,80 +9,86 @@ import {
   formatPaymentAllocatedEmail,
   formatPaymentReceiptClientEmail,
 } from '../../lib/emailTemplates';
+import {
+  executeFinancialChain,
+  DetailedFinancialChain,
+  DEFAULT_PAYSTACK_NGN_CONFIG,
+  toMinorUnits,
+} from '../splits/feeEngine';
 
 export interface FinancialChainBreakdown {
+  grossAmountMinor: number;
   grossAmount: number;
+  providerFeeMinor: number;
   providerFee: number;
+  platformFeeMinor: number;
   platformFee: number;
+  platformFeePercent: number;
+  taxMinor: number;
   tax: number;
+  distributableAmountMinor: number;
   distributableAmount: number;
   collaboratorAllocations: Array<{
     collaboratorId: string;
     userId: string | null;
     role: string;
     splitPercentage: number;
+    amountMinor: number;
     amount: number;
   }>;
 }
 
 /**
  * Calculates the exact financial chain values using integer minor-unit arithmetic (kobo).
- * This is a pure function — no side effects.
+ * Pure function with guaranteed invariants.
  */
 export function calculateFinancialChain(
   grossAmountNaira: number,
-  platformFeePercent: number = 0,
-  providerFeeNaira: number = 0,
+  platformFeePercent: number = Number(process.env.PLATFORM_FEE_PERCENT || 1.01),
+  providerFeeNaira?: number,
   collaborators: Array<{
     id: string;
     userId: string | null;
     role: string;
     splitPercentage: number | Prisma.Decimal | any;
-  }>
+  }> = []
 ): FinancialChainBreakdown {
   const grossKobo = Math.round(grossAmountNaira * 100);
-  const providerFeeKobo = Math.round(providerFeeNaira * 100);
-  const platformFeeKobo = Math.round(grossKobo * (platformFeePercent / 100));
-  const taxKobo = 0;
+  const providerFeeKobo = providerFeeNaira !== undefined ? Math.round(providerFeeNaira * 100) : undefined;
 
-  const distributableKobo = Math.max(0, grossKobo - providerFeeKobo - platformFeeKobo - taxKobo);
+  const collabList = collaborators.map((c) => ({
+    id: c.id,
+    userId: c.userId,
+    role: c.role,
+    splitPercentage: typeof c.splitPercentage === 'number' ? c.splitPercentage : Number(c.splitPercentage),
+  }));
 
-  let allocatedKoboSum = 0;
-  const allocations = collaborators.map((c, idx) => {
-    const splitPct =
-      typeof c.splitPercentage === 'number' ? c.splitPercentage : Number(c.splitPercentage);
-    let allocKobo = Math.floor(distributableKobo * (splitPct / 100));
-    // Last collaborator gets any remaining kobo to guarantee 100% total
-    if (idx === collaborators.length - 1) {
-      allocKobo = distributableKobo - allocatedKoboSum;
-    }
-    allocatedKoboSum += allocKobo;
-    return {
-      collaboratorId: c.id,
-      userId: c.userId,
-      role: c.role,
-      splitPercentage: splitPct,
-      amount: allocKobo / 100,
-    };
+  const result = executeFinancialChain({
+    grossAmountMinor: grossKobo,
+    platformFeePercent,
+    authoritativeProviderFeeMinor: providerFeeKobo,
+    collaborators: collabList,
   });
 
   return {
-    grossAmount: grossKobo / 100,
-    providerFee: providerFeeKobo / 100,
-    platformFee: platformFeeKobo / 100,
-    tax: taxKobo / 100,
-    distributableAmount: distributableKobo / 100,
-    collaboratorAllocations: allocations,
+    grossAmountMinor: result.grossAmountMinor,
+    grossAmount: result.grossAmount,
+    providerFeeMinor: result.providerFeeMinor,
+    providerFee: result.providerFee,
+    platformFeeMinor: result.platformFeeMinor,
+    platformFee: result.platformFee,
+    platformFeePercent: result.platformFeePercent,
+    taxMinor: result.taxMinor,
+    tax: result.tax,
+    distributableAmountMinor: result.distributableAmountMinor,
+    distributableAmount: result.distributableAmount,
+    collaboratorAllocations: result.collaboratorAllocations,
   };
 }
 
 /**
  * Authoritative Payment Confirmation & State Machine.
- * 1. Verify with Paystack
- * 2. Update Transaction to SUCCESSFUL/FAILED
- * 3. Build SplitSnapshot from current PoolMembers
- * 4. Persist SplitAllocations
- * Returns the payment data and financial breakdown as per Tobi's docs.
+ * Shared by webhook and verify endpoints with strict idempotency and audit logs.
  */
 export async function confirmPaymentTransaction(
   reference: string
@@ -98,6 +102,7 @@ export async function confirmPaymentTransaction(
         select: {
           id: true,
           name: true,
+          currency: true,
           ownerId: true,
           owner: { select: { id: true, email: true, fullName: true } },
           members: { include: { user: true } },
@@ -111,23 +116,48 @@ export async function confirmPaymentTransaction(
     throw new AppError(404, 'Transaction not found for this reference', 'NOT_FOUND');
   }
 
-  // 2. Idempotency — if already confirmed, return persisted breakdown
+  // 2. Idempotency Guard: if already confirmed, return persisted breakdown
   if (transaction.status === PaymentStatus.SUCCESSFUL && transaction.splitSnapshot) {
     const snapshot = transaction.splitSnapshot;
+    const grossMinor = snapshot.grossAmountMinor
+      ? Number(snapshot.grossAmountMinor)
+      : Math.round(Number(snapshot.totalAmount) * 100);
+    const providerFeeMinor = snapshot.providerFeeMinor
+      ? Number(snapshot.providerFeeMinor)
+      : (snapshot.providerFee ? Math.round(Number(snapshot.providerFee) * 100) : 0);
+    const platformFeeMinor = snapshot.platformFeeMinor
+      ? Number(snapshot.platformFeeMinor)
+      : (snapshot.platformFee ? Math.round(Number(snapshot.platformFee) * 100) : 0);
+    const taxMinor = snapshot.taxMinor ? Number(snapshot.taxMinor) : 0;
+    const distributableMinor = snapshot.distributableAmountMinor
+      ? Number(snapshot.distributableAmountMinor)
+      : Math.round(Number(snapshot.distributableAmount) * 100);
+
     const breakdown: FinancialChainBreakdown = {
-      grossAmount: Number(snapshot.totalAmount),
-      providerFee: 0,
-      platformFee: 0,
-      tax: 0,
-      distributableAmount: Number(snapshot.distributableAmount),
-      collaboratorAllocations: snapshot.allocations.map(a => ({
-        collaboratorId: a.poolMemberId,
-        userId: null,
-        role: 'Collaborator',
-        splitPercentage: Number(a.percentage),
-        amount: Number(a.amount),
-      })),
+      grossAmountMinor: grossMinor,
+      grossAmount: grossMinor / 100,
+      providerFeeMinor,
+      providerFee: providerFeeMinor / 100,
+      platformFeeMinor,
+      platformFee: platformFeeMinor / 100,
+      platformFeePercent: snapshot.platformFeePercent ? Number(snapshot.platformFeePercent) : 0,
+      taxMinor,
+      tax: taxMinor / 100,
+      distributableAmountMinor: distributableMinor,
+      distributableAmount: distributableMinor / 100,
+      collaboratorAllocations: snapshot.allocations.map((a) => {
+        const allocMinor = a.amountMinor ? Number(a.amountMinor) : Math.round(Number(a.amount) * 100);
+        return {
+          collaboratorId: a.poolMemberId,
+          userId: null,
+          role: 'Collaborator',
+          splitPercentage: Number(a.percentage),
+          amountMinor: allocMinor,
+          amount: allocMinor / 100,
+        };
+      }),
     };
+
     return {
       payment: {
         id: transaction.id,
@@ -169,15 +199,20 @@ export async function confirmPaymentTransaction(
 
   // 4. Build pool members for allocation
   const members = transaction.pool.members;
-  const splitConfig = await prisma.splitConfiguration.findFirst({
-    where: { poolId: transaction.poolId },
-    orderBy: { updatedAt: 'desc' },
-  });
+  const [splitConfig, poolInvitations] = await Promise.all([
+    prisma.splitConfiguration.findFirst({
+      where: { poolId: transaction.poolId },
+      orderBy: { updatedAt: 'desc' },
+    }),
+    prisma.poolInvitation.findMany({
+      where: { poolId: transaction.poolId },
+    }),
+  ]);
 
   const configuredType = splitConfig?.type ?? SplitType.EQUAL;
-  const equalSplit = members.length > 0 ? 100 / members.length : 0;
+  const equalSplit = members.length > 0 ? Math.round((100 / members.length) * 100) / 100 : 0;
   let snapshotType: SplitType = SplitType.EQUAL;
-  let collaboratorsForCalc = members.map(m => ({
+  let collaboratorsForCalc = members.map((m) => ({
     id: m.id,
     userId: m.userId,
     role: m.role,
@@ -191,68 +226,148 @@ export async function confirmPaymentTransaction(
       shareMap.set(String(item.memberId), Number(item.percentage));
     }
 
-    const customCollaborators = members.map((m) => ({
-      id: m.id,
-      userId: m.userId,
-      role: m.role,
-      splitPercentage: shareMap.get(m.id) ?? shareMap.get(m.userId) ?? NaN,
-    }));
+    const ownerMembers = members.filter((m) => m.role === PoolRole.OWNER || m.userId === transaction.pool.ownerId);
+    const nonOwnerMembers = members.filter((m) => m.role !== PoolRole.OWNER && m.userId !== transaction.pool.ownerId);
 
-    const hasAllPercentages = customCollaborators.every((m) => Number.isFinite(m.splitPercentage));
-    const totalPercentage = customCollaborators.reduce((sum, m) => sum + Number(m.splitPercentage), 0);
+    let nonOwnerAllocatedSum = 0;
+    const resolvedNonOwners = nonOwnerMembers.map((m) => {
+      let pct = shareMap.get(m.id) ?? shareMap.get(m.userId);
+      if (pct === undefined && m.user?.email) {
+        pct = shareMap.get(m.user.email.toLowerCase()) ?? shareMap.get(m.user.email);
+        if (pct === undefined) {
+          const matchedInv = poolInvitations.find(
+            (inv) => inv.email && inv.email.toLowerCase() === m.user.email.toLowerCase()
+          );
+          if (matchedInv) {
+            pct = shareMap.get(matchedInv.token) ?? shareMap.get(matchedInv.id) ?? (matchedInv.code ? shareMap.get(matchedInv.code) : undefined);
+          }
+        }
+      }
+      const finalPct = Number.isFinite(pct) ? Math.max(0, Number(pct)) : 0;
+      nonOwnerAllocatedSum += finalPct;
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        splitPercentage: finalPct,
+      };
+    });
 
-    if (hasAllPercentages && Math.abs(totalPercentage - 100) <= 0.01) {
+    const ownerRemainder = Math.max(0, Math.round((100 - nonOwnerAllocatedSum) * 100) / 100);
+    const resolvedOwners = ownerMembers.map((m) => {
+      if (ownerMembers.length === 1) {
+        return {
+          id: m.id,
+          userId: m.userId,
+          role: m.role,
+          splitPercentage: ownerRemainder,
+        };
+      }
+      const configuredPct = shareMap.get(m.id) ?? shareMap.get(m.userId);
+      const splitPct = Number.isFinite(configuredPct)
+        ? Number(configuredPct)
+        : Math.round((ownerRemainder / ownerMembers.length) * 100) / 100;
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: m.role,
+        splitPercentage: splitPct,
+      };
+    });
+
+    const customCollaborators = [...resolvedOwners, ...resolvedNonOwners];
+    const totalCustomPercentage = customCollaborators.reduce((sum, m) => sum + Number(m.splitPercentage), 0);
+
+    if (Math.abs(totalCustomPercentage - 100) <= 1.0) {
+      const diff = Math.round((100 - totalCustomPercentage) * 100) / 100;
+      if (diff !== 0 && customCollaborators.length > 0) {
+        customCollaborators[0].splitPercentage = Math.round((customCollaborators[0].splitPercentage + diff) * 100) / 100;
+      }
       snapshotType = SplitType.CUSTOM;
       collaboratorsForCalc = customCollaborators;
     }
   }
 
+  const configuredPlatformFeePercent = Number(process.env.PLATFORM_FEE_PERCENT || 1.01);
+
   const breakdown = calculateFinancialChain(
     paystackData.amountInNaira,
-    0,           // platform fee %
+    configuredPlatformFeePercent,
     paystackData.feesInNaira,
     collaboratorsForCalc
   );
 
-  // 5. Persist everything in a transaction
-  await prisma.$transaction(async tx => {
-    // Update transaction record
+  // 5. Atomic database transaction
+  await prisma.$transaction(async (tx) => {
+    // A. Update transaction
     await tx.transaction.update({
       where: { id: transaction.id },
       data: {
         status: PaymentStatus.SUCCESSFUL,
-        amount: paystackData.amountInNaira,
+        amount: breakdown.grossAmount,
+        amountMinor: BigInt(breakdown.grossAmountMinor),
         payerEmail: paystackData.customerEmail,
         paidAt: paystackData.paidAt ? new Date(paystackData.paidAt) : new Date(),
       },
     });
 
-    // Create SplitSnapshot (immutable freeze)
+    // B. Record SplitPay platform fee record if applicable
+    if (breakdown.platformFeeMinor > 0 && (tx as any).platformFee) {
+      try {
+        await (tx as any).platformFee.create({
+          data: {
+            transactionId: transaction.id,
+            poolId: transaction.poolId,
+            grossAmountMinor: BigInt(breakdown.grossAmountMinor),
+            feePercent: new Prisma.Decimal(breakdown.platformFeePercent),
+            amountMinor: BigInt(breakdown.platformFeeMinor),
+            amount: new Prisma.Decimal(breakdown.platformFee),
+            currency: transaction.currency,
+            status: PaymentStatus.SUCCESSFUL,
+          },
+        });
+      } catch (feeErr) {
+        console.warn('[Ledger] PlatformFee record write skipped:', feeErr);
+      }
+    }
+
+    // C. Create SplitSnapshot (immutable freeze with minor units)
     const snapshot = await tx.splitSnapshot.create({
       data: {
         poolId: transaction.poolId,
         transactionId: transaction.id,
         type: snapshotType,
         snapshotData: collaboratorsForCalc as any,
-        totalAmount: breakdown.grossAmount,
-        distributableAmount: breakdown.distributableAmount,
+        totalAmount: new Prisma.Decimal(breakdown.grossAmount),
+        distributableAmount: new Prisma.Decimal(breakdown.distributableAmount),
+        grossAmountMinor: BigInt(breakdown.grossAmountMinor),
+        providerFeeMinor: BigInt(breakdown.providerFeeMinor),
+        platformFeeMinor: BigInt(breakdown.platformFeeMinor),
+        taxMinor: BigInt(breakdown.taxMinor),
+        distributableAmountMinor: BigInt(breakdown.distributableAmountMinor),
+        platformFeePercent: new Prisma.Decimal(breakdown.platformFeePercent),
+        providerFee: new Prisma.Decimal(breakdown.providerFee),
+        platformFee: new Prisma.Decimal(breakdown.platformFee),
+        tax: new Prisma.Decimal(breakdown.tax),
+        calculationVersion: 'v2',
       },
     });
 
-    // Create SplitAllocations
+    // D. Create SplitAllocations with minor units
     if (members.length > 0) {
       await tx.splitAllocation.createMany({
-        data: breakdown.collaboratorAllocations.map(a => ({
+        data: breakdown.collaboratorAllocations.map((a) => ({
           snapshotId: snapshot.id,
           poolMemberId: a.collaboratorId,
-          percentage: a.splitPercentage,
-          amount: a.amount,
+          percentage: new Prisma.Decimal(a.splitPercentage),
+          amount: new Prisma.Decimal(a.amount),
+          amountMinor: BigInt(a.amountMinor),
           currency: transaction.currency,
         })),
       });
     }
 
-    // Mark payment link as inactive (can't be paid again)
+    // E. Mark payment link inactive
     if (transaction.paymentLinkId) {
       await tx.paymentLink.update({
         where: { id: transaction.paymentLinkId },
@@ -260,65 +375,86 @@ export async function confirmPaymentTransaction(
       });
     }
 
-    // Notify pool owner that payment has been received
-    try {
-      const poolName = transaction.pool.name;
-      await tx.notification.create({
-        data: {
-          userId: transaction.pool.ownerId,
-          title: 'Payment received',
-          message: `A payment of ₦${breakdown.grossAmount.toLocaleString()} has been confirmed for "${poolName}".`,
-          type: 'PAYMENT_RECEIVED',
-          data: {
-            poolId: transaction.poolId,
-            transactionId: transaction.id,
-            grossAmount: breakdown.grossAmount,
-            reference,
-          },
-        },
-      });
-
-      // Notify collaborators with their respective allocation shares
-      for (const alloc of breakdown.collaboratorAllocations) {
-        if (alloc.userId && alloc.userId !== transaction.pool.ownerId) {
-          await tx.notification.create({
-            data: {
-              userId: alloc.userId,
-              title: 'Payment Allocated',
-              message: `You received ₦${alloc.amount.toLocaleString()} (${alloc.splitPercentage}%) from a confirmed payment in "${poolName}".`,
-              type: 'PAYMENT_ALLOCATED',
-              data: {
-                poolId: transaction.poolId,
-                transactionId: transaction.id,
-                amount: alloc.amount,
-                percentage: alloc.splitPercentage,
-                reference,
-              },
-            },
-          });
-        }
-      }
-    } catch {
-      // Notification failure must not abort the payment confirmation
-    }
-
-    // Audit log
+    // F. Audit logs
     await tx.auditLog.create({
       data: {
         entityType: 'TRANSACTION',
         entityId: transaction.id,
-        action: 'PAYMENT_CONFIRMED',
-        metadata: { reference, grossAmount: breakdown.grossAmount },
+        action: 'PAYMENT_VERIFIED',
+        metadata: {
+          reference,
+          grossAmount: breakdown.grossAmount,
+          providerFee: breakdown.providerFee,
+          platformFee: breakdown.platformFee,
+          distributableAmount: breakdown.distributableAmount,
+        },
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'SPLIT_SNAPSHOT',
+        entityId: snapshot.id,
+        action: 'SPLIT_SNAPSHOT_CREATED',
+        metadata: {
+          poolId: transaction.poolId,
+          transactionId: transaction.id,
+          allocationsCount: breakdown.collaboratorAllocations.length,
+        },
       },
     });
   });
 
-  // 6. Asynchronous isolated email dispatch
+  // 6. Asynchronous Notification & Email Dispatch (after DB commit)
+  try {
+    const poolName = transaction.pool.name;
+
+    // In-app notification to Owner
+    await prisma.notification.create({
+      data: {
+        userId: transaction.pool.ownerId,
+        title: 'Payment received',
+        message: `A payment of ₦${breakdown.grossAmount.toLocaleString()} has been confirmed for "${poolName}".`,
+        type: 'PAYMENT_RECEIVED',
+        data: {
+          poolId: transaction.poolId,
+          transactionId: transaction.id,
+          grossAmount: breakdown.grossAmount,
+          reference,
+        },
+      },
+    });
+
+    // In-app notifications to Collaborators
+    for (const alloc of breakdown.collaboratorAllocations) {
+      if (alloc.userId && alloc.userId !== transaction.pool.ownerId) {
+        await prisma.notification.create({
+          data: {
+            userId: alloc.userId,
+            title: 'Payment Allocated',
+            message: `₦${alloc.amount.toLocaleString()} has been allocated to you from "${poolName}".`,
+            type: 'PAYMENT_ALLOCATED',
+            data: {
+              poolId: transaction.poolId,
+              transactionId: transaction.id,
+              amount: alloc.amount,
+              percentage: alloc.splitPercentage,
+              reference,
+            },
+          },
+        });
+      }
+    }
+  } catch (notifErr) {
+    console.error('[Notification Warning] Failed to dispatch in-app notifications:', notifErr);
+  }
+
+  // Email dispatch
   try {
     const poolName = transaction.pool.name;
     const poolUrl = `${env.FRONTEND_URL}/dashboard/pools/${transaction.poolId}`;
 
-    // A. Email to Pool Owner
+    // A. Email to Owner
     if (transaction.pool.owner?.email) {
       const ownerEmail = formatPaymentReceivedOwnerEmail({
         ownerName: transaction.pool.owner.fullName || transaction.pool.owner.email,
@@ -362,7 +498,7 @@ export async function confirmPaymentTransaction(
       }
     }
 
-    // C. Payment Receipt Email to Paying Client
+    // C. Payment Receipt to Paying Client
     const clientEmail = paystackData.customerEmail || transaction.payerEmail;
     if (clientEmail) {
       const receiptEmail = formatPaymentReceiptClientEmail({
@@ -381,7 +517,7 @@ export async function confirmPaymentTransaction(
       });
     }
   } catch (emailErr) {
-    console.error('[Mailer Warning] Failed to dispatch transactional emails for payment confirmation:', emailErr);
+    console.error('[Mailer Warning] Failed to dispatch transactional emails:', emailErr);
   }
 
   return {
@@ -399,5 +535,97 @@ export async function confirmPaymentTransaction(
       channel: 'Paystack Gateway',
     },
     breakdown,
+  };
+}
+
+/**
+ * Calculates SplitPay platform revenue and financial metrics independently from pool balances.
+ */
+export async function getPlatformRevenueSummary(params?: {
+  startDate?: Date;
+  endDate?: Date;
+  poolId?: string;
+}) {
+  const whereTx: Prisma.TransactionWhereInput = {
+    status: PaymentStatus.SUCCESSFUL,
+    ...(params?.poolId ? { poolId: params.poolId } : {}),
+    ...(params?.startDate || params?.endDate
+      ? {
+          paidAt: {
+            ...(params.startDate ? { gte: params.startDate } : {}),
+            ...(params.endDate ? { lte: params.endDate } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const [transactions, snapshots, platformFees, withdrawals] = await Promise.all([
+    prisma.transaction.findMany({ where: whereTx }),
+    prisma.splitSnapshot.findMany({
+      where: params?.poolId ? { poolId: params.poolId } : {},
+      include: { allocations: true },
+    }),
+    prisma.platformFee.findMany({
+      where: params?.poolId ? { poolId: params.poolId } : {},
+    }),
+    prisma.withdrawal.findMany({
+      where: {
+        status: 'SUCCESSFUL',
+        ...(params?.poolId ? { poolId: params.poolId } : {}),
+      },
+    }),
+  ]);
+
+  const grossPaymentVolumeMinor = transactions.reduce(
+    (sum, tx) => sum + toMinorUnits(tx.amountMinor, tx.amount),
+    0,
+  );
+
+  const totalProviderFeesMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.providerFeeMinor, s.providerFee),
+    0,
+  );
+
+  const totalPlatformRevenueMinor = platformFees.reduce((sum, f) => {
+    return sum + Number(f.amountMinor);
+  }, 0);
+
+  const totalTaxMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.taxMinor, s.tax),
+    0,
+  );
+
+  const netDistributableVolumeMinor = snapshots.reduce(
+    (sum, s) => sum + toMinorUnits(s.distributableAmountMinor, s.distributableAmount),
+    0,
+  );
+
+  const totalMemberAllocationsMinor = snapshots.reduce((sum, s) => {
+    return (
+      sum +
+      s.allocations.reduce((aSum, a) => aSum + toMinorUnits(a.amountMinor, a.amount), 0)
+    );
+  }, 0);
+
+  const totalWithdrawalsMinor = withdrawals.reduce(
+    (sum, w) => sum + toMinorUnits(w.amountMinor, w.amount),
+    0,
+  );
+
+  return {
+    grossPaymentVolume: grossPaymentVolumeMinor / 100,
+    grossPaymentVolumeMinor,
+    totalProviderFees: totalProviderFeesMinor / 100,
+    totalProviderFeesMinor,
+    totalPlatformRevenue: totalPlatformRevenueMinor / 100,
+    totalPlatformRevenueMinor,
+    totalTax: totalTaxMinor / 100,
+    totalTaxMinor,
+    netDistributableVolume: netDistributableVolumeMinor / 100,
+    netDistributableVolumeMinor,
+    totalMemberAllocations: totalMemberAllocationsMinor / 100,
+    totalMemberAllocationsMinor,
+    totalWithdrawals: totalWithdrawalsMinor / 100,
+    totalWithdrawalsMinor,
   };
 }

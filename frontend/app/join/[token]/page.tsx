@@ -16,6 +16,7 @@ interface Invitation {
   inviterName: string;
   inviterEmail: string;
   createdAt: string;
+  isAlreadyAccepted?: boolean;
 }
 
 interface Props {
@@ -60,11 +61,12 @@ export default function JoinPage({ params }: Props) {
 
     setState("accepting");
     try {
-      await api.post(`/invitations/${token}/accept`, {});
+      const res: any = await api.post(`/invitations/${token}/accept`, {});
       setState("success");
+      const targetPoolId = res?.poolId || invitation?.projectId;
       setTimeout(() => {
-        router.push(invitation?.projectId ? `/dashboard/pools/${invitation.projectId}` : "/dashboard/pools");
-      }, 1400);
+        router.push(targetPoolId ? `/dashboard/pools/${targetPoolId}` : "/dashboard/pools");
+      }, 1200);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to accept invitation.");
       setState("error");
@@ -83,6 +85,35 @@ export default function JoinPage({ params }: Props) {
             <Bone width="100%" height={100} radius="14px" />
           </div>
           <Bone width="100%" height={44} radius="100px" />
+        </div>
+      </Shell>
+    );
+  }
+
+  /* ── Already Joined / Accepted ── */
+  if (invitation?.isAlreadyAccepted) {
+    return (
+      <Shell>
+        <div style={{ textAlign: "center", padding: "12px 0" }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: "50%",
+            background: "rgba(37,99,235,0.08)", color: "#2563EB",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            margin: "0 auto 16px auto"
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <h1 style={{ fontSize: 20, fontWeight: 500, color: "#0A0A0A", marginBottom: 8, letterSpacing: "-0.02em" }}>
+            Workspace Already Joined
+          </h1>
+          <p style={{ fontSize: 13.5, color: "#777", lineHeight: 1.6, marginBottom: 24, maxWidth: 360, margin: "0 auto 24px auto" }}>
+            You or a collaborator has already accepted this invitation to <strong>{invitation.projectName}</strong>.
+          </p>
+          <Link href={`/dashboard/pools/${invitation.projectId}`} style={primaryBtnStyle}>
+            Open Workspace →
+          </Link>
         </div>
       </Shell>
     );
@@ -107,7 +138,7 @@ export default function JoinPage({ params }: Props) {
             Invitation Expired or Invalid
           </h1>
           <p style={{ fontSize: 13.5, color: "#777", lineHeight: 1.6, marginBottom: 24, maxWidth: 360, margin: "0 auto 24px auto" }}>
-            This invitation code or link has expired, been revoked, or is already claimed.
+            This invitation code or link has expired, been revoked, or is invalid.
           </p>
           <Link href="/dashboard" style={primaryBtnStyle}>
             Go to Dashboard
@@ -205,6 +236,32 @@ export default function JoinPage({ params }: Props) {
           <strong>{invitation.inviterName}</strong> ({invitation.inviterEmail}) has invited you to join this collaborative payment workspace on SplitPay.
         </p>
 
+        {/* Agreed Split Percentage — hero card */}
+        {invitation.splitPercentage > 0 && (
+          <div style={{
+            padding: "18px 20px", borderRadius: 14,
+            background: "linear-gradient(135deg, rgba(37,99,235,0.06) 0%, rgba(37,99,235,0.02) 100%)",
+            border: "1px solid rgba(37,99,235,0.18)",
+            marginBottom: 16,
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+          }}>
+            <div>
+              <p style={{ fontSize: 11.5, fontWeight: 600, color: "#2563EB", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+                Your Agreed Split Share
+              </p>
+              <p style={{ fontSize: 11, color: "#555", lineHeight: 1.5, maxWidth: 240 }}>
+                This is the exact percentage the pool owner has allocated to you. It will be locked in when you accept.
+              </p>
+            </div>
+            <div style={{
+              fontSize: 30, fontWeight: 700, color: "#2563EB",
+              fontFamily: "var(--font-mono)", letterSpacing: "-0.02em", flexShrink: 0,
+            }}>
+              {invitation.splitPercentage}%
+            </div>
+          </div>
+        )}
+
         {/* Invitation metadata card */}
         <div style={{
           padding: "18px 20px", borderRadius: 14,
@@ -214,6 +271,9 @@ export default function JoinPage({ params }: Props) {
           <Row label="Role Assigned" value={invitation.role || "Collaborator"} />
           <Row label="Recipient" value={invitation.invitedEmail ?? "Anyone with invitation link"} />
           <Row label="Invite Code" value={token.toUpperCase()} mono />
+          {invitation.splitPercentage > 0 && (
+            <Row label="Split Percentage" value={`${invitation.splitPercentage}% of net distributable`} />
+          )}
         </div>
 
         {/* Guarantees & Transparency */}
@@ -227,7 +287,7 @@ export default function JoinPage({ params }: Props) {
               <polyline points="20 6 9 17 4 12" />
             </svg>
             <span style={{ fontSize: 12, color: "#555" }}>
-              Automated financial distribution upon client payment completion.
+              Your split share is pre-agreed and will be locked in automatically when you join.
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -236,6 +296,14 @@ export default function JoinPage({ params }: Props) {
             </svg>
             <span style={{ fontSize: 12, color: "#555" }}>
               Direct bank account withdrawal for your allocated share.
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span style={{ fontSize: 12, color: "#555" }}>
+              Automated financial distribution upon client payment completion.
             </span>
           </div>
         </div>

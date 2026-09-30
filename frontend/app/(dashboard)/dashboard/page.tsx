@@ -5,9 +5,9 @@ import { useSearchParams } from "next/navigation";
 import EmptyDashboard from "../_components/EmptyDashboard";
 import PopulatedDashboard from "../_components/PopulatedDashboard";
 import DashboardSkeleton from "../_components/DashboardSkeleton";
-import { api } from "../../../lib/api";
-import { getUser } from "../../lib/auth";
-import { PoolResponse, NotificationResponse } from "../../../lib/contracts";
+import { api } from "@/app/lib/api";
+import { getUser } from "@/app/lib/auth";
+import { PoolResponse, NotificationResponse, PoolBalanceResponse } from "@/lib/contracts";
 
 function DashboardContent() {
   const params = useSearchParams();
@@ -17,17 +17,18 @@ function DashboardContent() {
   // Check synchronous cache for instant zero-delay rendering
   const cachedPools = api.getCached<PoolResponse[]>("/pools");
   const cachedNotes = api.getCached<NotificationResponse[]>("/notifications");
-  const hasCachedData = Boolean((cachedPools && cachedPools.length > 0) || (cachedNotes && cachedNotes.length > 0));
+  const hasAuthoritativeCache = cachedPools !== null;
 
-  const [loading, setLoading] = useState(!hasCachedData && !forceDemo);
+  const [hasResolved, setHasResolved] = useState<boolean>(hasAuthoritativeCache || forceDemo);
   const [pools, setPools] = useState<PoolResponse[]>(cachedPools ?? []);
+  const [balances, setBalances] = useState<Record<string, PoolBalanceResponse>>({});
   const [notifications, setNotifications] = useState<NotificationResponse[]>(cachedNotes ?? []);
-  const [userName, setUserName] = useState<string>("User");
+  const [userName, setUserName] = useState<string>(() => getUser()?.fullName || "User");
 
   useEffect(() => {
     if (forceLoading) return;
     if (forceDemo) {
-      setLoading(false);
+      setHasResolved(true);
       return;
     }
 
@@ -40,13 +41,32 @@ function DashboardContent() {
     async function loadData() {
       try {
         const [userPools, userNotes, me] = await Promise.all([
-          api.getPools().catch(() => [] as PoolResponse[]),
+          api.getPools({ forceFresh: true }).catch(() => [] as PoolResponse[]),
           api.getNotifications().catch(() => [] as NotificationResponse[]),
           api.getMe().catch(() => null),
         ]);
 
         if (!isMounted) return;
-        setPools(Array.isArray(userPools) ? userPools : []);
+        const validPools = Array.isArray(userPools) ? userPools : [];
+        const balanceMap: Record<string, PoolBalanceResponse> = {};
+
+        if (validPools.length > 0) {
+          const balanceResults = await Promise.all(
+            validPools.map((p) =>
+              api
+                .get<PoolBalanceResponse>(`/pools/${p.id}/balance`)
+                .then((b) => ({ id: p.id, balance: b }))
+                .catch(() => null),
+            ),
+          );
+          balanceResults.forEach((r) => {
+            if (r?.balance) balanceMap[r.id] = r.balance;
+          });
+        }
+
+        if (!isMounted) return;
+        setPools(validPools);
+        setBalances(balanceMap);
         setNotifications(Array.isArray(userNotes) ? userNotes : []);
         if (me?.fullName) {
           setUserName(me.fullName);
@@ -54,7 +74,7 @@ function DashboardContent() {
       } catch (err) {
         console.error("Failed to load dashboard data:", err);
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) setHasResolved(true);
       }
     }
 
@@ -65,10 +85,17 @@ function DashboardContent() {
     };
   }, [forceDemo, forceLoading]);
 
-  if (forceLoading || loading) return <DashboardSkeleton />;
+  if (forceLoading || !hasResolved) return <DashboardSkeleton />;
   if (forceDemo) return <PopulatedDashboard userName={userName} />;
   if (pools.length > 0) {
-    return <PopulatedDashboard userName={userName} pools={pools} notifications={notifications} />;
+    return (
+      <PopulatedDashboard
+        userName={userName}
+        pools={pools}
+        initialBalances={balances}
+        notifications={notifications}
+      />
+    );
   }
   return <EmptyDashboard />;
 }

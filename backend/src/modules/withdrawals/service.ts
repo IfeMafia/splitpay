@@ -43,6 +43,10 @@ export async function requestWithdrawal(
     );
   }
 
+  const amountMinor = Math.round(dto.amount * 100);
+  const { calculatePaystackTransferCost } = await import('../splits/feeEngine');
+  const transferCost = calculatePaystackTransferCost(amountMinor, member.pool.currency);
+
   // Create withdrawal record in PENDING state inside a transaction
   const withdrawal = await prisma.$transaction(async (tx) => {
     const newWithdrawal = await tx.withdrawal.create({
@@ -50,6 +54,9 @@ export async function requestWithdrawal(
         poolId,
         poolMemberId: member.id,
         amount: dto.amount,
+        amountMinor: BigInt(amountMinor),
+        transferFeeMinor: BigInt(transferCost.transferFeeMinor),
+        stampDutyMinor: BigInt(transferCost.stampDutyMinor),
         currency: member.pool.currency,
         status: WithdrawalStatus.PENDING,
         bankCode: dto.bankCode,

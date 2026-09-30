@@ -112,7 +112,8 @@ export default function PoolWorkspacePage({ params }: Props) {
         api.get<SplitConfigResponse>(`/pools/${poolId}/split`).catch(() => null as SplitConfigResponse | null),
       ]);
       setPool(poolData);
-      setCollaborators(Array.isArray(collabData) ? collabData : []);
+      const cleanCollabs = Array.isArray(collabData) ? collabData.filter(c => c.invitedEmail || c.userId) : [];
+      setCollaborators(cleanCollabs);
       setPayments(Array.isArray(paymentData) ? paymentData : []);
       if (balanceData) setBalance(balanceData);
       if (splitData) setSplitConfig(splitData);
@@ -127,8 +128,8 @@ export default function PoolWorkspacePage({ params }: Props) {
   }, [poolId]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(Boolean(cachedPool));
+  }, [load, cachedPool]);
 
   if (loadState === "loading") return <PoolSkeleton />;
   if (loadState === "error") return <PoolError message={errorMsg} status={errorStatus} poolId={poolId} />;
