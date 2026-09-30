@@ -31,12 +31,52 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [demoFilling, setDemoFilling] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated()) {
       router.replace(redirectUrl);
     }
   }, [router, redirectUrl]);
+
+  const DEMO_EMAIL = "Ifemafiaa@gmail.com";
+  const DEMO_PASSWORD = "Winner#23";
+
+  const handleDemoSignIn = async () => {
+    setDemoFilling(true);
+    // Animate fill — type each char with a small delay so the user sees it
+    for (let i = 0; i <= DEMO_EMAIL.length; i++) {
+      setEmail(DEMO_EMAIL.slice(0, i));
+      await new Promise(r => setTimeout(r, 30));
+    }
+    setShowPassword(true);
+    for (let i = 0; i <= DEMO_PASSWORD.length; i++) {
+      setPassword(DEMO_PASSWORD.slice(0, i));
+      await new Promise(r => setTimeout(r, 40));
+    }
+    setDemoFilling(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: DEMO_EMAIL.trim(), password: DEMO_PASSWORD }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.message ?? `Error ${res.status}`);
+      const token = body.data?.token || body.token;
+      if (!token) throw new Error("No authentication token returned");
+      setToken(token);
+      const userData = body.data?.user || body.user;
+      if (userData) setUser(userData);
+      toast.success("Signed in as Demo!");
+      router.replace(redirectUrl);
+    } catch (err) {
+      toast.error(err, "Demo sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,7 +128,7 @@ function LoginForm() {
       </div>
 
       {/* Social Login */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 32 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
         <GoogleAuthButton
           text="continue_with"
           onSuccess={() => {
@@ -99,6 +139,58 @@ function LoginForm() {
             // Handled via toast inside GoogleAuthButton
           }}
         />
+
+        {/* Demo sign-in */}
+        <button
+          type="button"
+          onClick={handleDemoSignIn}
+          disabled={loading || demoFilling}
+          style={{
+            width: "100%",
+            padding: "13px 16px",
+            borderRadius: "100px",
+            border: "1.5px dashed #D0D0D0",
+            background: "#FAFAFA",
+            color: "#555",
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: loading || demoFilling ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            transition: "border-color 140ms, background 140ms, color 140ms",
+            fontFamily: "var(--font-outfit)",
+            opacity: loading || demoFilling ? 0.6 : 1,
+          }}
+          onMouseEnter={e => {
+            if (!loading && !demoFilling) {
+              (e.currentTarget as HTMLElement).style.borderColor = "#0A0A0A";
+              (e.currentTarget as HTMLElement).style.color = "#0A0A0A";
+              (e.currentTarget as HTMLElement).style.background = "#F5F5F5";
+            }
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLElement).style.borderColor = "#D0D0D0";
+            (e.currentTarget as HTMLElement).style.color = "#555";
+            (e.currentTarget as HTMLElement).style.background = "#FAFAFA";
+          }}
+        >
+          {demoFilling ? (
+            <><Spinner /> Filling demo credentials…</>
+          ) : loading ? (
+            <><Spinner /> Signing in…</>
+          ) : (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                <polyline points="10 17 15 12 10 7" />
+                <line x1="15" y1="12" x2="3" y2="12" />
+              </svg>
+              Sign in as Demo
+            </>
+          )}
+        </button>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
