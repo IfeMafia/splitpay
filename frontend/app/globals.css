@@ -1,7 +1,13 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:wght@400..900&family=Geist+Mono:wght@100..900&display=swap");
 @import "tailwindcss";
 
 /* ─── DESIGN TOKENS ─────────────────────── */
 :root {
+  /* Font families (mirror next/font/google CSS variable names) */
+  --font-outfit: "Outfit", sans-serif;
+  --font-playfair: "Playfair Display", serif;
+  --font-geist-mono: "Geist Mono", monospace;
+
   /* Surfaces */
   --bg:          #F9F9F9;
   --bg-white:    #FFFFFF;
